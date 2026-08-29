@@ -90,6 +90,43 @@ explicit platform-gated user action.
   history attributes authorship to the project maintainer (GitHub's
   contributor graph recalculates on its own schedule after the force-push).
 
+### Added (TURN resilience + server config)
+
+- **TURN/STUN auto-restart:** `infra/remot-coturn.service` and
+  `infra/remot-signaling.service` — systemd units that restart coturn and the
+  signaling broker automatically whenever they die (`Restart=always`,
+  `RestartSec=3`, burst limits).
+- `infra/remot-watchdog.sh` — a liveness watchdog that health-checks the
+  signaling `/healthz` and performs a real STUN Binding over UDP against the
+  live coturn; if either is down (or hung-but-active), it restarts the unit
+  via systemctl, so a dead TURN server comes back by itself. Includes a small
+  dependency-free Python STUN probe.
+- `infra/check-ports.sh` — external reachability checker. Run from a machine
+  **outside** the VPS to confirm 8080, 3478 (TCP+UDP), 5349, and the relay
+  range are open from the internet.
+
+### Changed (server endpoint wiring)
+
+- Server endpoints are now sourced **only from GitHub Secrets** — never
+  hardcoded: `SERVER_URL` (signaling; used as a fallback for `SIGNALING_URL`)
+  and `SERVER_IP` (direct public IP fallback for STUN/TURN health probes).
+  Builds pass these through the `build.yml` env and expose them via
+  `BuildConfig.SERVER_URL` / `BuildConfig.SERVER_IP`.
+- `NetworkHealthRepository` now falls back to the configured `SERVER_IP` for
+  the STUN/TURN probe when the hostname the signaling server issued is
+  unreachable (DNS/STUN/timeout) — so a direct-IP connection is attempted
+  before reporting TURN offline, without embedding any address in the APK
+  source.
+
+### Fixed
+
+- **TURN/STUN ports were `filtered` externally:** an external scan of the VPS
+  showed 3478/5349 TCP `filtered` and UDP closed (only 8080 was open) — the
+  exact cause of the app reporting STUN/TURN unreachable. The TURN relay
+  cannot work until the firewall/security-group opens UDP+TCP 3478, TCP 5349,
+  and UDP 49152–65535 for the public IP. Documented in `infra/README.md` and
+  surfaced by `check-ports.sh` (elevated to a gateway above).
+
 ### Versioning
 
 - Bumped production version to **V2C003** (`versionName`), `versionCode`

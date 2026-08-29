@@ -1,0 +1,17 @@
+[Unit]
+Description=Remot signaling WebSocket broker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/remot/server
+ExecStart=/usr/bin/node --env-file=/opt/remot/server/.env src/server.js
+# Auto-restart the signaling broker if it crashes, is killed, or exits non-zero.
+Restart=always
+RestartSec=3
+StartLimitIntervalSec=60
+StartLimitBurst=5
+User=remot
+
+[Install]
+WantedBy=multi-user.target

@@ -57,13 +57,15 @@ jobs:
         working-directory: android
         env:
           SIGNALING_URL: ${{ secrets.SIGNALING_URL }}
+          SERVER_URL: ${{ secrets.SERVER_URL }}
+          SERVER_IP: ${{ secrets.SERVER_IP }}
           RELEASE_KEYSTORE_PATH: release.keystore
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
-          if [ -z "$SIGNALING_URL" ]; then
-            echo "::error::SIGNALING_URL secret is missing."
+          if [ -z "$SIGNALING_URL" ] && [ -z "$SERVER_URL" ]; then
+            echo "::error::SIGNALING_URL (or SERVER_URL) secret is missing."
             exit 1
           fi
           ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleRelease --no-daemon --stacktrace

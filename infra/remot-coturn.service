@@ -1,0 +1,30 @@
+[Unit]
+Description=Remot coturn (STUN/TURN) relay
+After=network.target
+AssertPathExists=/etc/turnserver.conf
+
+[Service]
+Type=simple
+# Auto-restart whenever coturn dies, is killed, or exits non-zero, with a short
+# backoff so a crash loop doesn't hammer the CPU. The watchdog script below adds
+# liveness checking on top of systemd's restart behaviour.
+ExecStart=/usr/bin/turnserver -c /etc/turnserver.conf -v
+Restart=always
+RestartSec=3
+StartLimitIntervalSec=60
+StartLimitBurst=5
+# OOM protection for a network daemon that can hold many relay allocations.
+OOMPolicy=continue
+OOMScoreAdjust=-500
+LimitNOFILE=65536
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

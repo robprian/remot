@@ -28,7 +28,13 @@ val signingKeystorePath = configValue("RELEASE_KEYSTORE_PATH", "keystorePath")
 val signingKeystorePass = configValue("RELEASE_KEYSTORE_PASSWORD", "keystorePassword")
 val signingKeyAlias     = configValue("RELEASE_KEY_ALIAS", "keyAlias")
 val signingKeyPass      = configValue("RELEASE_KEY_PASSWORD", "keyPassword")
-val signalingUrl        = configValue("SIGNALING_URL")
+// Server endpoints. CI supplies these ONLY from GitHub Secrets (never hardcoded
+// in source). SIGNALING_URL is the primary signaling endpoint; SERVER_URL is a
+// secondary alias used when SIGNALING_URL is unset. SERVER_IP is a direct-IP
+// fallback for STUN/TURN health probes when the issued hostname is unreachable.
+val signalingUrl        = configValue("SIGNALING_URL", "SERVER_URL")
+val serverUrl           = configValue("SERVER_URL")
+val serverIp            = configValue("SERVER_IP")
 
 android {
     namespace = "com.robrion.remot"
@@ -51,6 +57,16 @@ android {
             "String",
             "SIGNALING_URL",
             "\"" + (signalingUrl ?: "ws://SIGNALING_URL_OVERRIDE_ME:8080") + "\""
+        )
+        buildConfigField(
+            "String",
+            "SERVER_URL",
+            "\"" + (serverUrl ?: "") + "\""
+        )
+        buildConfigField(
+            "String",
+            "SERVER_IP",
+            "\"" + (serverIp ?: "") + "\""
         )
     }
 

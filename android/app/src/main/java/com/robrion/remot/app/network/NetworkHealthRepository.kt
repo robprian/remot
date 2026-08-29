@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import com.robrion.remot.BuildConfig
 import com.robrion.remot.ServiceLocator
 import com.robrion.remot.session.SessionManager
 import kotlinx.coroutines.CoroutineScope
@@ -120,14 +121,7 @@ class NetworkHealthRepository(
         var error: String? = null
 
         if (internet == EndpointState.ONLINE && turnEndpoint != null) {
-            val result = runCatching {
-                StunTurnProbe(
-                    host = turnEndpoint.host,
-                    port = turnEndpoint.port,
-                    username = turnEndpoint.username,
-                    password = turnEndpoint.password,
-                ).probe()
-            }.getOrElse { StunTurnResult.unknown }
+            val result = probeEndpoint(turnEndpoint)
 
             stun = if (result.stunOk) EndpointState.ONLINE else EndpointState.OFFLINE
             turn = if (result.turnOk) EndpointState.ONLINE else EndpointState.OFFLINE
@@ -170,6 +164,32 @@ class NetworkHealthRepository(
         } catch (e: Exception) {
             EndpointState.UNKNOWN
         }
+    }
+
+    /**
+     * Probes the issued TURN endpoint. If that host is unreachable and a direct
+     * public IP was configured at build time (SERVER_IP secret), retries against
+     * the IP so connectivity is honest even when the hostname route is down.
+     */
+    private fun probeEndpoint(ep: TurnEndpoint): StunTurnResult {
+        fun probe(host: String) = runCatching {
+            StunTurnProbe(
+                host = host,
+                port = ep.port,
+                username = ep.username,
+                password = ep.password,
+            ).probe()
+        }.getOrElse { StunTurnResult.unknown }
+
+        val primary = probe(ep.host)
+        // Only fall back to the IP when the primary genuinely failed its STUN
+        // step (DNS or unreachable) — not when it just lacked credentials.
+        val ip = BuildConfig.SERVER_IP
+        if (ip.isNotBlank() && ip != ep.host && primary.error in setOf("dns", "stun", "timeout")) {
+            val fallback = probe(ip)
+            return if (fallback.stunOk || fallback.turnOk) fallback else primary
+        }
+        return primary
     }
 
     // ---- TURN endpoint parsing ----

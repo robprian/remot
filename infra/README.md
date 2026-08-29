@@ -53,29 +53,56 @@ balancer or uptime monitor at it.
 The server logs structured JSON lines (`{ts, level, msg, ...}`) to stdout/stderr.
 No secrets are ever logged. Ship stdout to your log aggregator of choice.
 
-### Running as a system service (systemd example)
+### Running as a system service (systemd — with auto-restart)
 
-```ini
-# /etc/systemd/system/remot-signaling.service
-[Unit]
-Description=Remot signaling server
-After=network.target
-
-[Service]
-WorkingDirectory=/opt/remot/server
-ExecStart=/usr/bin/node --env-file=/opt/remot/server/.env src/server.js
-Restart=always
-RestartSec=3
-User=remot
-
-[Install]
-WantedBy=multi-user.target
-```
+Both the signaling server and coturn ship ready-to-use systemd units with
+**auto-restart**: if the process dies or exits non-zero, systemd brings it
+back automatically. Install them from this repo:
 
 ```bash
+echo "REMOTE_HOST_IP=$(hostname -I | awk '{print $1}')"    # for reference only, not committed
+sudo cp infra/remot-signaling.service /etc/systemd/system/
+sudo cp infra/remot-coturn.service    /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now remot-signaling
+sudo systemctl enable --now remot-signaling remot-coturn
 ```
+
+Both units use:
+
+```ini
+Restart=always
+RestartSec=3
+StartLimitIntervalSec=60
+StartLimitBurst=5
+```
+
+So a crashed/hung process is retried, while a crash loop (5 exits in 60 s)
+gives systemd a chance to back off instead of thrashing the 2-core host.
+
+### Liveness watchdog
+
+systemd restarts a process that *exits*; it does not by itself notice a
+process that stays `active` but becomes unresponsive. Run the watchdog to
+catch that too — it checks the signaling `GET /healthz` every 30 s and sends a
+real STUN Binding over UDP to coturn; if either fails it restarts the unit:
+
+```bash
+sudo cp infra/remot-watchdog.sh /opt/remot/infra/remot-watchdog.sh
+chmod +x /opt/remot/infra/remot-watchdog.sh
+# one-shot check, good for a cron row:
+/opt/remot/infra/remot-watchdog.sh once
+# continuous loop (systemd timer or use as a spaced loop):
+/opt/remot/infra/remot-watchdog.sh
+```
+
+Example crontab (every minute is cheap):
+
+```cron
+* * * * * /opt/remot/infra/remot-watchdog.sh once >> /var/log/remot-watchdog.log 2>&1
+```
+
+`remot-watchdog.sh` never touches or logs secrets; it only emits service
+start/restart diagnostics.
 
 ---
 
@@ -106,15 +133,45 @@ In `infra/turnserver.conf` replace:
 
 | Port | Protocol | Purpose |
 | --- | --- | --- |
+| 8080 | TCP | Signaling / WebSocket |
 | 3478 | UDP + TCP | STUN + TURN |
 | 5349 | TCP | TURNS (TLS) |
 | 49152–65535 | UDP | TURN relay allocations |
 
-### Verify
+Apply these inbound rules in **both** the cloud security group (e.g. the
+Alibaba Cloud Security Group) and any host firewall (ufw/nftables). If the app
+uses a direct public IP (`SERVER_IP`) rather than a hostname, open the same
+rules for that IP.
 
-Use a WebRTC trickle-ICE test page (e.g. webrtc.github.io/samples) with your
-STUN and TURN credentials from the signaling server to confirm candidates are
-gathered and relay works before wiring the app.
+### Verify ports from the outside
+
+The authoritative reachability test is a real allocation from a client
+outside the network. A quick external scan helps first — run from a machine
+**not** on the VPS (laptop, cloud shell):
+
+```bash
+export SERVER_HOST=your.public.ip
+./check-ports.sh
+```
+
+Expected (from the public internet):
+
+| Port | Protocol | Expected | Purpose |
+| --- | --- | --- | --- |
+| 8080 | TCP | open | Signaling / WebSocket |
+| 3478 | UDP + TCP | open | STUN + TURN |
+| 5349 | TCP | open | TURNS (TLS) |
+| 49152–65535 | UDP | open | TURN relay allocations |
+
+> **If 3478/5349 show `filtered`** (or UDP closed) the TURN relay will report
+> unreachable from the app. `filtered` in nmap means a firewall/security-group
+> is silently dropping the packets, not rejecting them — apply the inbound
+> rules below to the public IP (including a direct IP such as when using
+> `SERVER_IP` instead of a hostname).
+
+A confirmed full-stack test is a real relay allocation through the app or a
+WebRTC trickle-ICE test page (e.g. webrtc.github.io/samples) with the TURN
+credentials from the signaling server.
 
 ---
 
