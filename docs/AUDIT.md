@@ -260,5 +260,5 @@ Controller dials paired host id ──join──► server
 | Compatibility | minSdk 26 → 25 (Android 7.1) with `NotificationChannel` guards; document Android 16. |
 | Input | Add long-press protocol action + controller UI; add keyboard/text input UI on controller; aspect-correct touch mapping on the video surface. |
 | Docs | New `README.md`, `docs/AUDIT.md`, `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/ANDROID_COMPATIBILITY.md`, `docs/REMOTE_PROTOCOL.md`, `docs/DEVELOPMENT.md`, `infra/README.md`, root `.env.example`, `CHANGELOG.md`. |
-| Versioning | `1.0.0` (versionCode 1). |
-| CI | `android-release.yml`: lightweight push/PR validation, tag-triggered release APK + GitHub Release. |
+| Versioning | V/C/P scheme (`docs/VERSIONING.md`): `V1C001` (versionCode 100100). |
+| CI | `ci.yml` (PR + push main): build/test/lint only, no releases; `release.yml` (V/C/P tags only): release APK + GitHub Release. |

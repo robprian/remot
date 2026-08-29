@@ -6,12 +6,95 @@ The format follows the project convention: every version entry contains the
 version, date, short summary, changed components, bug fixes, and notable
 technical changes.
 
+Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
+`V1C001`, `V1C001P01`, ... Legacy semver releases are preserved below under
+`Legacy` entries. New versions are always inserted at the top.
+
 ---
 
-## [Unreleased]
+## V1C001 — 2026-08-29
 
 ### Summary
 
+First production version under the V/C/P versioning scheme. Continues the
+same codebase as the legacy `v1.0.0`/`v1.0.1` releases: Remot is a
+consent-first, end-to-end-encrypted Android-to-Android remote control
+application (rebranded from RemoteAssist, `com.remot.app`, Android 7.1+),
+with an authenticated signaling broker, WebRTC P2P media/control, and a
+two-workflow GitHub Actions pipeline.
+
+### Added
+
+- V/C/P production versioning: `docs/VERSIONING.md` defining the
+  `V{major}C{change}P{patch}` scheme, the `versionCode = V*100000 + C*100 + P`
+  mapping (V1C001 → 100100), lowercase tag format, and the semver migration.
+- `scripts/release-check.sh` — release gate validating git state, secrets,
+  version format, CHANGELOG, Android `versionName`/`versionCode`, unit tests,
+  lint, release build, and APK metadata before a production tag is created.
+- Android `versionName` `V1C001`, `versionCode` `100100` (was 1.0.0 / 1).
+
+### Changed
+
+- Rebranded RemoteAssist → Remot across app, server, docs, and CI; package
+  `com.remoteassist` → `com.remot.app`; deep link `remot://`; `minSdk` 25
+  (Android 7.1) with `NotificationChannel` guards.
+- Home/session UI redesigned; long-press control, keyboard text input, and
+  aspect-correct touch mapping added on the controller.
+- Android `SIGNALING_URL` (debug + release) now points at the production
+  signaling broker (`ws://` until TLS is deployed); the broker issues
+  STUN/TURN ice servers against the public TURN hostname `turn.robrion.net`.
+- Signaling registration is now authenticated (server verifies
+  `deviceId == SHA-256(pubKey)` + ECDSA signature over a fresh nonce).
+
+### Fixed
+
+- Server previously accepted any claimed `deviceId` without proof of key
+  ownership (identity/routing hijacking) — now rejected.
+- GitHub Release creation 403 (`Resource not accessible by integration`) —
+  release workflow declares `permissions: contents: write` and passes the
+  built-in `github.token`. No PAT is used.
+- Release pipeline no longer runs on ordinary `main` pushes; duplicate
+  workflow execution eliminated by splitting into `ci.yml` (PR + main) and
+  `release.yml` (production tags only).
+- Removed unused `SYSTEM_ALERT_WINDOW` permission (Play-policy risk).
+
+### Security
+
+- Signed device registration; forged pairings rejected; rate limiting for
+  joins and per-socket message floods; time-limited TURN credentials;
+  DTLS-fingerprint MITM protection; `.env` git-ignored, no secrets in repo.
+
+### CI
+
+- `ci.yml` (Remot CI): pull requests + pushes to `main` — server smoke test,
+  Android build/unit tests/lint, debug APK artifact. Never creates releases.
+- `release.yml` (Remot Release): triggers ONLY on V/C/P production tags
+  (`v[0-9]c[0-9][0-9][0-9]` / `v[0-9]c[0-9][0-9][0-9]p[0-9][0-9]`) — builds
+  only `assembleRelease`, verifies APK metadata, names it
+  `remot-v<tag>.apk`, creates GitHub Release `Remot V<version>` with the APK
+  attached. Runs once per tag; optional signing via `KEYSTORE_*` secrets.
+- Versioning migration: legacy tags `v1.0.0` / `v1.0.1` are preserved; the
+  first V/C/P production tag is `v1c001`.
+
+### Notable technical changes
+
+- Protocol: registration handshake extended (`auth-challenge`/`auth-response`
+  without `to` = server-direct; with `to` = peer relay) — documented in
+  `docs/REMOTE_PROTOCOL.md`.
+- Server: WebSocket server hosted on an HTTP server to serve `/healthz`;
+  graceful shutdown on SIGINT/SIGTERM; structured JSON logging; rejected
+  registrations close the connection (1008/4000).
+- Android: `SignalingClient` presents `DeviceIdentity.publicKeyB64()` on
+  register and stops auto-reconnecting after a permanent registration
+  rejection; `long-press` maps to a 600 ms gesture stroke on the host.
+
+---
+
+## Legacy v1.0.1 — 2026-08-29
+
+### Summary
+
+Legacy semver release under the old scheme (superseded by V1C001).
 Restructured GitHub Actions to eliminate duplicate runs and guarantee release
 permissions: CI and release are now separate workflows.
 
@@ -43,7 +126,7 @@ permissions: CI and release are now separate workflows.
 
 ---
 
-## [1.0.0] - 2026-08-29
+## Legacy v1.0.0 — 2026-08-29
 
 ### Summary
 

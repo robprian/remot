@@ -170,6 +170,6 @@ grant-scope without CONTROL), input is dropped (`InputRouter.controlEnabled`).
 
 ## 3. Versioning
 
-This protocol is stable at v1.0.0. Any breaking change (new required fields,
+This protocol is stable at V1C001. Any breaking change (new required fields,
 removed message types, changed semantics) MUST bump the server/app major
 version and be recorded in `CHANGELOG.md`.

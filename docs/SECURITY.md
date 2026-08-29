@@ -1,7 +1,7 @@
 # Remot — Security Model
 
 Security is treated as a first-class feature. This document states what is
-implemented (v1.0.0), what threat each control mitigates, and what remains.
+implemented (V1C001), what threat each control mitigates, and what remains.
 
 ---
 

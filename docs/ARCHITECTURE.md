@@ -5,7 +5,7 @@ public Internet. It is a remote-support tool (comparable to AnyDesk/TeamViewer
 QuickSupport) built on platform APIs only: MediaProjection for screen capture,
 AccessibilityService for input injection, and WebRTC for transport.
 
-This document describes the architecture as implemented in v1.0.0.
+This document describes the architecture as implemented in V1C001.
 
 ---
 

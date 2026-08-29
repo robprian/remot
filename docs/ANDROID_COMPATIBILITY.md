@@ -29,7 +29,7 @@ back) are handled as follows:
   device; documented for the production rollout.
 
 A future release may move to compileSdk/targetSdk 36 (requires AGP ≥ 8.9.1 +
-Gradle 8.11.1+); this is tracked as a follow-up, not a v1.0.0 blocker.
+Gradle 8.11.1+); this is tracked as a follow-up, not a V1C001 blocker.
 
 ---
 
@@ -92,7 +92,7 @@ Gradle 8.11.1+); this is tracked as a follow-up, not a v1.0.0 blocker.
    effectively single-use. The scaffold stores the grant Intent; a production
    unattended build must keep the capturer/track alive across sessions rather
    than rebuilding from a stored Intent. This is a documented platform ceiling
-   for the v1.0.0 unattended path.
+   for the V1C001 unattended path.
 2. **Input injection scope:** `dispatchGesture` injects at the screen level;
    apps using custom views/non-accessible surfaces may not respond to
    `ACTION_SET_TEXT`. Gestures generally work everywhere.
@@ -106,7 +106,7 @@ Gradle 8.11.1+); this is tracked as a follow-up, not a v1.0.0 blocker.
 6. **System dialogs / secure screens:** MediaProjection deliberately cannot
    capture secure surfaces (e.g. DRM video, some banking screens); the remote
    screen shows a blank/black area — this is platform behavior, not a bug.
-7. **Device audio:** not streamed in v1.0.0 (`RECORD_AUDIO` intentionally
+7. **Device audio:** not streamed in V1C001 (`RECORD_AUDIO` intentionally
    absent from the manifest).
 8. **FCM wake:** requires a Firebase project + `google-services.json`
    (never committed). Without it, offline-host wake is inert; attended

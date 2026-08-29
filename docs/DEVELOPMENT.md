@@ -63,18 +63,29 @@ and WebRTC cannot meaningfully run in a single emulator):
 
 ## 4. Release process
 
-Semantic versioning. One commit per logical change; every meaningful change
-recorded in `CHANGELOG.md`.
+Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
+`V1C001`, `V1C001P01`, ... One commit per logical change; every meaningful
+change is recorded at the top of `CHANGELOG.md`.
 
-```bash
-# bump versionName/versionCode in android/app/build.gradle.kts
-git tag v1.0.0
-git push origin v1.0.0
-```
+1. Run the release gate locally — it checks git state, secrets, version
+   format, CHANGELOG, Android `versionName`/`versionCode`, then runs unit
+   tests, lint, the release build, and verifies the APK metadata:
 
-The tag triggers `android-release.yml`, which builds + tests + lints the app,
-runs the server smoke test, uploads artifacts, and creates a **GitHub
-Release** with the APKs (`remot-v1.0.0.apk` release build, `remot-v1.0.0-debug.apk`).
+   ```bash
+   ./scripts/release-check.sh v1c001
+   ```
+
+2. Create the production tag and push it:
+
+   ```bash
+   git tag v1c001
+   git push origin v1c001
+   ```
+
+The tag triggers the `release.yml` workflow, which builds the release APK,
+verifies its metadata against the tag, and creates a **GitHub Release**
+"Remot V1C001" with `remot-v1c001.apk` attached. CI (`ci.yml`) runs on
+pushes to main and pull requests only and never creates releases.
 
 ### Signing
 
