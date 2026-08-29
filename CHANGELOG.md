@@ -38,6 +38,21 @@ explicit platform-gated user action.
   / error) surfaced at the app root, checked on foreground and throttled to
   avoid hammering the GitHub API.
 
+### Fixed
+
+- **Cleartext signaling:** the app runs targetSdk 35, which blocks `ws://`
+  cleartext by default — so a plain `ws://` signaling endpoint never connects,
+  leaving **Signaling=unreachable** and **STUN/TURN=unknown** (no credentials are
+  ever issued). Enabled `usesCleartextTraffic` so `ws://` signaling can connect
+  over the internet; `wss://` remains supported. Prefer `wss://` for production.
+- **Developer diagnostics in-app:** the Services & Diagnostics screen now shows
+  the compiled signaling endpoint, the last signaling connection error (e.g.
+  cleartext/DNS/TLS/rejected), a note explaining STUN/TURN credentials arrive
+  once signaling connects, and a Developer card with build/versionCode/applicationId.
+- **ProGuard/R8 keep rules** for the AccessibilityService, NotificationListener,
+  and `ServiceStatus` so minified release builds never rename/strip the
+  system-bound service classes (keeps enablement and state detection working).
+
 ### Versioning
 
 - Bumped production version to **V2C003** (`versionName`), `versionCode`

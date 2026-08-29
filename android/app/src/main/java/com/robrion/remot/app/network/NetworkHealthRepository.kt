@@ -19,6 +19,8 @@ enum class EndpointState { CHECKING, ONLINE, OFFLINE, UNKNOWN }
 data class NetworkHealth(
     val internet: EndpointState = EndpointState.UNKNOWN,
     val signaling: EndpointState = EndpointState.UNKNOWN,
+    val signalingUrl: String? = null,
+    val signalingError: String? = null,
     val stun: EndpointState = EndpointState.UNKNOWN,
     val turn: EndpointState = EndpointState.UNKNOWN,
     val turnHost: String? = null,
@@ -104,6 +106,11 @@ class NetworkHealthRepository(
         val signaling = if (ServiceLocator.signaling.isConnected) EndpointState.ONLINE
         else EndpointState.OFFLINE
 
+        // Developer-facing signaling diagnostic data (URL + why it's failing).
+        val signalingUrl = ServiceLocator.signaling.signalingUrl
+        val signalingError = if (signaling == EndpointState.ONLINE) null
+        else ServiceLocator.signaling.lastConnectError
+
         // Derive the TURN/STUN endpoint + credentials from the ice servers the
         // signaling server actually issued (never hardcoded, never fake).
         val turnEndpoint = parseTurnEndpoint(iceServers)
@@ -135,6 +142,8 @@ class NetworkHealthRepository(
         return NetworkHealth(
             internet = internet,
             signaling = signaling,
+            signalingUrl = signalingUrl,
+            signalingError = signalingError,
             stun = stun,
             turn = turn,
             turnHost = turnEndpoint?.host,

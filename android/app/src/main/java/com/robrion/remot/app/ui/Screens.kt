@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.robrion.remot.BuildConfig
@@ -321,6 +322,10 @@ private fun ServicesScreen(
         // Device / app info
         SectionHeading("Device")
         InfoCard(vm)
+
+        // Developer / build info
+        SectionHeading("Developer")
+        DeveloperInfoCard(vm.networkHealth)
     }
 }
 
@@ -350,8 +355,25 @@ private fun DiagnosticsCard(vm: MainViewModel) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             StatusIndicator("Internet", h.internet)
             StatusIndicator("Signaling", h.signaling)
+            h.signalingUrl?.let {
+                Row {
+                    Text("Signaling endpoint", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    Text(it, style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            h.signalingError?.let {
+                Text("Reason: $it", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error)
+            }
             StatusIndicator("STUN", h.stun)
             StatusIndicator("TURN", h.turn)
+            if (h.stun == EndpointState.UNKNOWN && h.turn == EndpointState.UNKNOWN) {
+                Text("STUN/TURN credentials come from the signaling server once it connects.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             h.turnHost?.let {
                 Row {
                     Text("TURN host", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
@@ -405,6 +427,24 @@ private fun InfoRow(label: String, value: String) {
         Text(label, style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
         Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** Developer-facing build/signing/endpoint info surfaced for support & debugging. */
+@Composable
+private fun DeveloperInfoCard(health: NetworkHealth) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            InfoRow("Build", "${BuildConfig.VERSION_NAME} · ${BuildConfig.BUILD_TYPE}")
+            InfoRow("versionCode", BuildConfig.VERSION_CODE.toString())
+            InfoRow("applicationId", BuildConfig.APPLICATION_ID)
+            InfoRow("Signaling", health.signalingUrl ?: "—")
+            InfoRow("TURN host", health.turnHost ?: "—")
+        }
     }
 }
 

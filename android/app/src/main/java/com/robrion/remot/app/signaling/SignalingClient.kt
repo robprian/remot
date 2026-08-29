@@ -46,6 +46,13 @@ class SignalingClient(
     }
 
     @Volatile var isConnected = false; private set
+
+    /** The endpoint this client was built with — surfaced in Diagnostics. */
+    val signalingUrl: String get() = url
+
+    /** Last connection failure reason (cleared on a successful connect). */
+    @Volatile var lastConnectError: String? = null; private set
+
     var onReconnected: (() -> Unit)? = null
 
     private val client = OkHttpClient.Builder().pingInterval(20, java.util.concurrent.TimeUnit.SECONDS).build()
@@ -63,6 +70,7 @@ class SignalingClient(
         ws = client.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 isConnected = true
+                lastConnectError = null
                 reconnectAttempt = 0
                 // Present the public key; the server verifies deviceId == sha256(pub),
                 // challenges us with a nonce (see onAuthChallenge), and only then
@@ -76,8 +84,18 @@ class SignalingClient(
                 onReconnected?.invoke()
             }
             override fun onMessage(webSocket: WebSocket, text: String) = handle(JSONObject(text))
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) = scheduleReconnect()
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = scheduleReconnect()
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                // Surface WHY we can't reach signaling (e.g. cleartext-blocked,
+                // DNS, TLS, or the server is down) so it's visible in Diagnostics.
+                lastConnectError = t.message
+                    ?: response?.code?.let { "HTTP $it" }
+                    ?: "connection failed"
+                scheduleReconnect()
+            }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (lastConnectError == null) lastConnectError = reason.ifBlank { "closed ($code)" }
+                scheduleReconnect()
+            }
         })
     }
 
