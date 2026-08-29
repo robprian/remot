@@ -12,6 +12,30 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C004 — 2026-08-29
+
+### Summary
+
+Publishes the connectivity and pairing fixes accumulated after V2C003 as a
+fresh production version, so devices on V2C003 receive them through the
+in-app update prompt (versionCode 200400 > 200300). Includes IPv4-first
+signaling/STUN-TURN resolution, automatic signaling endpoint fallback,
+a working "Pair a new device" flow, and the developer GitHub link.
+
+### Changed
+
+- Bumped production version to **V2C004** (`versionName`), `versionCode`
+  **200400**.
+
+### Notes
+
+- All functional changes in this version are described in detail under the
+  V2C003 entry (Signaling/STUN-TURN IPv4-first, endpoint fallback rotation,
+  Pair a new device wiring, developer link); this entry exists to roll them
+  out to installed V2C003 devices as an auto-update-visible release.
+
+---
+
 ## V2C003 — 2026-08-29
 
 ### Summary
