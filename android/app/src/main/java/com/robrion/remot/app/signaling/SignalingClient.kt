@@ -62,13 +62,22 @@ class SignalingClient(
     // from mobile carriers — e.g. turn.robrion.net resolves to IPv6 first, then
     // IPv4, and the IPv6 leg can abort ("Software caused connection abort")
     // before OkHttp falls through to IPv4. Ordering IPv4 first fixes that.
-    private val ipv4FirstDns = Dns { hostname ->
-        val all = try {
-            InetAddress.getAllByName(hostname).toList()
-        } catch (e: Exception) {
-            Dns.SYSTEM.lookup(hostname)
+    private val ipv4FirstDns = object : Dns {
+        override fun lookup(hostname: String): Array<InetAddress> =
+            resolve(hostname).toTypedArray()
+
+        override fun resolve(hostname: String): List<InetAddress> {
+            val all = try {
+                InetAddress.getAllByName(hostname).toList()
+            } catch (e: Exception) {
+                return try {
+                    Dns.SYSTEM.lookup(hostname).toList()
+                } catch (e2: Exception) {
+                    emptyList()
+                }
+            }
+            return all.sortedBy { it.hostAddress?.contains(":") == true } // IPv6 last
         }
-        all.sortedBy { it.hostAddress?.contains(":") == true } // IPv6 last (contains ':')
     }
 
     private val client = OkHttpClient.Builder()
