@@ -49,6 +49,13 @@ open-relay coturn that hijacked the public IP is disabled/masked).
   It is now `disabled` + `masked`, leaving only the authenticated
   `remot-coturn.service`. TURNS TCP 5349 stays closed (no TLS cert; not
   advertised).
+- **Real relay-media verification:** `scripts/turn-relay-test.mjs` now runs the
+  full RFC 5766 sequence (authenticated Allocate → relay-port range check →
+  STUN peer-IP discovery → CreatePermission → peer datagram relayed back as a
+  DATA indication), proving UDP 49152–65535 actually forwards media from an
+  external vantage — verified PASS against the backup server.
+  Documented in `infra/README.md` (backup-server setup + the
+  two-coturns-open-relay pitfall and its disable+mask fix).
 
 ---
 ## V2C004P03 — 2026-08-29

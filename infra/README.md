@@ -195,6 +195,88 @@ hardcoded. It exits non-zero only when **signaling** is unreachable; STUN/TURN
 results are reported without failing so a firewall-blocked TURN never blocks
 Android releases (the probe job uses `continue-on-error: true`).
 
+### Verify real relay media end-to-end (`scripts/turn-relay-test.mjs`)
+
+`probe-endpoints.mjs` proves the control path (Allocate answers with a 401
+challenge); it does **not** prove the relay range forwards media. The definitive
+test for that is `scripts/turn-relay-test.mjs`, which runs the full RFC 5766
+sequence on one UDP socket:
+
+1. authenticated **Allocate** (auth-secret HMAC, same scheme as the app) →
+   reads `XOR-RELAYED-ADDRESS`;
+2. asserts the relayed port is inside `TURN_MIN_PORT..TURN_MAX_PORT`
+   (default 49152–65535);
+3. peer socket discovers its own public IP via STUN Binding;
+4. **CreatePermission** for that IP (without it coturn silently drops the
+   peer's datagram);
+5. peer sends a datagram **at the relayed address** and the client must
+   receive the exact payload back as a TURN DATA indication.
+
+Run it from a machine **outside** the TURN server's network:
+
+```bash
+export TURN_HOST=203.0.113.10        # direct public IP
+TURN_SECRET=<coturn static-auth-secret> node scripts/turn-relay-test.mjs
+```
+
+Exit 0 only when the media round-trip succeeds — that proves the UDP relay
+range is open and forwarding, not merely that the TURN service answers.
+
+---
+
+## 2.1 Backup / secondary server (failover)
+
+For resilience against a primary-server outage or a network route that blocks
+only one host, Remot supports a **second, independent signaling + coturn
+pair**. The Android app is built with the backup endpoints as automatic
+fallbacks: `BuildConfig.SERVER_URL_ALT` and `BuildConfig.SERVER_IP_ALT` are
+injected at build time **only from GitHub Secrets** (`SERVER_URL_ALT` /
+`SERVER_IP_ALT`) — never hardcoded in source. The signaling client tries the
+primary chain first (primary URL → wss variant → primary IP → **alt URL →
+alt IP ws/wss**), so a reachable backup broker is used automatically when the
+primary cannot connect.
+
+The backup server runs the exact same software and units as the primary:
+
+- **Signaling** — `infra/remot-signaling.service` (Node, `Restart=always`)
+  with its own `.env`, including its own `TURN_SECRET`.
+- **coturn** — `infra/remot-coturn.service` (`use-auth-secret`, relay range
+  49152–65535, its own `external-ip` / `realm`). The backup's coturn
+  `static-auth-secret` MUST match its own signaling `TURN_SECRET` — each
+  server pair keeps its own secret, so they are independent.
+- Same firewall ports: TCP 8080 (ws), UDP+TCP 3478 (STUN/TURN), and
+  **UDP 49152–65535** (relay media).
+
+Verify the backup the same way as the primary: `check-ports.sh`, the CI
+`network-probe` (or `probe-endpoints.mjs` locally), and
+`scripts/turn-relay-test.mjs` for real relay media.
+
+### Pitfall: two coturns = open relay (fixed)
+
+A host can end up running **two coturn instances**: the stock distro
+`coturn.service` (default config, **no auth**) and the deployment's
+`remot-coturn.service` (`use-auth-secret`). When the public IP is NAT'd onto a
+private address where the stock coturn listens, external TURN requests can
+land on the **no-auth instance** and succeed **without credentials — an open
+relay** (anyone can route traffic through it). Symptoms: an unauthenticated
+Allocate returns success instead of a 401 challenge, and `ss -lunp` shows more
+than one `turnserver` on 3478.
+
+Fix: identify which instance owns the public path, then disable **and mask**
+the stock service so it can never hijack the port again, leaving only the
+authenticated `remot-coturn.service`:
+
+```bash
+sudo systemctl disable --now coturn
+sudo systemctl mask coturn          # cannot be started even manually
+sudo systemctl enable --now remot-coturn
+sudo ss -lunp | grep 3478           # exactly ONE turnserver
+```
+
+Then prove auth is enforced from outside (see `probe-endpoints.mjs`): an
+unauthenticated Allocate must get a **401 challenge**, never a 0x0103
+success.
+
 ---
 
 ## 3. TLS
