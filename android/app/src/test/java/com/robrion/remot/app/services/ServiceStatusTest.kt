@@ -23,11 +23,8 @@ class ServiceStatusTest {
     }
 
     @Test fun singleExactMatch() {
-        assertTrue(
-            ServiceStatus.isComponentListed(
-                "com.robrion.remot/com.robrion.remot.host.RemoteInputService", "that"
-            )
-        )
+        val expected = "com.robrion.remot/com.robrion.remot.host.RemoteInputService"
+        assertTrue(ServiceStatus.isComponentListed(expected, expected))
     }
 
     @Test fun matchAmongMultipleEntries() {

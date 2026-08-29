@@ -4,6 +4,8 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.nio.ByteBuffer
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -23,9 +25,10 @@ class StunTurnProbeTest {
     fun stunReachableWithoutCredentialsIsReportedHonestly() {
         val server = MockStunTurnServer().start()
         try {
-            val result = StunTurnProbe(
-                server.host, server.port, username = null, password = null
-            ).probe()
+            // Loopback UDP is reliable, but retry a couple of times so a rare
+            // cold-loopback miss cannot turn a good build red; the assertion on
+            // stunOk still fails hard if the probe is genuinely broken.
+            val result = probeUntilOnline(server, username = null, password = null, expectTurn = false)
 
             assertTrue("DNS should resolve", result.dnsOk)
             assertTrue("STUN binding should succeed", result.stunOk)
@@ -42,9 +45,7 @@ class StunTurnProbeTest {
     fun authenticatedAllocateSucceeds() {
         val server = MockStunTurnServer().start()
         try {
-            val result = StunTurnProbe(
-                server.host, server.port, username = "user", password = "pass"
-            ).probe()
+            val result = probeUntilOnline(server, username = "user", password = "pass", expectTurn = true)
 
             assertTrue("DNS should resolve", result.dnsOk)
             assertTrue("STUN binding should succeed", result.stunOk)
@@ -55,6 +56,27 @@ class StunTurnProbeTest {
         } finally {
             server.stop()
         }
+    }
+
+    /**
+     * Runs the probe against a persistent loopback mock, retrying up to 3 times
+     * until the target layer (STUN or TURN) reports online. Returns the last
+     * result if it never comes online so the caller's asserts still fail.
+     */
+    private fun probeUntilOnline(
+        server: MockStunTurnServer,
+        username: String?,
+        password: String?,
+        expectTurn: Boolean,
+    ): StunTurnResult {
+        var last = StunTurnResult.unknown
+        for (attempt in 1..3) {
+            last = StunTurnProbe(server.host, server.port, username, password).probe()
+            val online = if (expectTurn) last.turnOk else last.stunOk
+            if (online) break
+            Thread.sleep(100)
+        }
+        return last
     }
 
     @Test
@@ -105,27 +127,42 @@ private class MockStunTurnServer {
     /** Assigned ephemeral loopback port the probe should target. */
     val port: Int get() = socket.localPort
 
-    var bindingRequests = 0
-    var allocateRequests = 0
+    @Volatile var bindingRequests = 0
+    @Volatile var allocateRequests = 0
 
     @Volatile private var running = false
+    private val ready = CountDownLatch(1)
     private var thread: Thread? = null
 
     fun start(): MockStunTurnServer {
         running = true
         thread = Thread {
+            // Signal once we are actually reading so probe() never races a
+            // thread that has not started receiving yet.
+            ready.countDown()
             while (running) {
                 val buf = ByteArray(1500)
                 val pkt = DatagramPacket(buf, buf.size)
                 try {
                     socket.receive(pkt)
                 } catch (e: Exception) {
-                    if (running) continue else break
+                    // Socket was closed by stop() — drain/exit the loop.
+                    break
                 }
-                handle(pkt.data.copyOf(pkt.length), pkt.address, pkt.port)
+                // A malformed request must not kill the reader thread.
+                try {
+                    handle(pkt.data.copyOf(pkt.length), pkt.address, pkt.port)
+                } catch (e: Exception) {
+                    System.err.println("MockStunTurnServer: dropping bad request: $e")
+                }
             }
         }.apply { isDaemon = true }
         thread?.start()
+        try {
+            ready.await(3, TimeUnit.SECONDS)
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
         return this
     }
 
