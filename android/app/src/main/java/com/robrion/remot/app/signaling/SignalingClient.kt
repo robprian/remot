@@ -63,15 +63,12 @@ class SignalingClient(
     // IPv4, and the IPv6 leg can abort ("Software caused connection abort")
     // before OkHttp falls through to IPv4. Ordering IPv4 first fixes that.
     private val ipv4FirstDns = object : Dns {
-        override fun lookup(hostname: String): Array<InetAddress> =
-            resolve(hostname).toTypedArray()
-
-        override fun resolve(hostname: String): List<InetAddress> {
+        override fun lookup(hostname: String): List<InetAddress> {
             val all = try {
                 InetAddress.getAllByName(hostname).toList()
             } catch (e: Exception) {
                 return try {
-                    Dns.SYSTEM.lookup(hostname).toList()
+                    Dns.SYSTEM.lookup(hostname)
                 } catch (e2: Exception) {
                     emptyList()
                 }
