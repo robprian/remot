@@ -85,6 +85,28 @@ device (requires pairing first). See `docs/ARCHITECTURE.md`.
 
 ---
 
+## Firewall ports (deployed server)
+
+The production signaling server + coturn run on the same host (floating IP
+`43.156.82.52`). Open these ports in the cloud security group / firewall so
+Remot works across networks:
+
+| Port(s) | Protocol | Purpose | Needed for |
+| --- | --- | --- | --- |
+| `8080` | TCP | Signaling WebSocket — `ws://43.156.82.52:8080` (registration, pairing, session codes, handshake relay) | The app connecting to the server |
+| `3478` | UDP | STUN + TURN (listener) | NAT traversal / P2P discovery + relay |
+| `3478` | TCP | TURN over TCP (fallback when UDP is blocked) | Relay fallback |
+| `49152–65535` | UDP | TURN relay allocations (media relay) | Actual media relay when P2P fails |
+| `5349` | TCP | TURNS (TURN over TLS) | Only if TLS + a domain are configured (not yet deployed) |
+
+> **Note:** TCP `8080` is already reachable. UDP `3478` and the relay range are
+> currently **filtered** — until they are opened, direct P2P and TURN relay
+> across the public Internet will not work (sessions still connect over LAN).
+> After opening them, re-verify with the trickle-ICE test described in
+> `infra/README.md`.
+
+---
+
 ## How a session flows
 
 ```
