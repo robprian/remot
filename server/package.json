@@ -1,7 +1,7 @@
 {
-  "name": "remoteassist-signaling",
+  "name": "remot-signaling",
   "version": "1.0.0",
-  "description": "Signaling + pairing broker and FCM wake service for RemoteAssist",
+  "description": "Signaling + pairing broker and FCM wake service for Remot",
   "type": "commonjs",
   "main": "src/server.js",
   "scripts": {

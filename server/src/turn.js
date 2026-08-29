@@ -6,7 +6,7 @@ const cfg = require('./config');
 // Generate short-lived TURN credentials compatible with coturn's
 // `use-auth-secret` / `static-auth-secret` mechanism.
 // username = "<unixExpiry>:<label>", password = base64(HMAC-SHA1(secret, username)).
-function turnCredentials(label = 'remoteassist') {
+function turnCredentials(label = 'remot') {
   const expiry = Math.floor(Date.now() / 1000) + cfg.turn.ttlSec;
   const username = `${expiry}:${label}`;
   const password = crypto

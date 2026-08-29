@@ -24,6 +24,9 @@ const pairings = new Map();
 // deviceId -> fcmToken
 const fcmTokens = new Map();
 
+// ip -> [timestamps] of recent join attempts (rate limiting)
+const joinAttempts = new Map();
+
 function linkPair(a, b) {
   if (!pairings.has(a)) pairings.set(a, new Set());
   pairings.get(a).add(b);
@@ -48,6 +51,6 @@ function findGrant(hostId, controllerId) {
 }
 
 module.exports = {
-  devices, sessions, pendingWakes, grants, pairings, fcmTokens,
+  devices, sessions, pendingWakes, grants, pairings, fcmTokens, joinAttempts,
   linkPair, unlinkPair, arePaired, findGrant,
 };

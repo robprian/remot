@@ -1,6 +1,7 @@
 'use strict';
 
 const cfg = require('./config');
+const log = require('./log');
 const { fcmTokens } = require('./state');
 
 // firebase-admin is an optional dependency. If it's absent or FCM is disabled,
@@ -12,12 +13,12 @@ if (cfg.fcmEnabled) {
     const admin = require('firebase-admin');
     admin.initializeApp({ credential: admin.credential.applicationDefault() });
     messaging = admin.messaging();
-    console.log('[fcm] enabled');
+    log.info('fcm_enabled');
   } catch (e) {
-    console.warn('[fcm] enabled in config but firebase-admin/credentials unavailable:', e.message);
+    log.warn('fcm_init_failed', { error: e.message });
   }
 } else {
-  console.log('[fcm] disabled (set FCM_ENABLED=true + credentials to enable)');
+  log.info('fcm_disabled');
 }
 
 /**
@@ -27,11 +28,11 @@ if (cfg.fcmEnabled) {
 async function wakeDevice(deviceId, payload) {
   const token = fcmTokens.get(deviceId);
   if (!token) {
-    console.warn(`[fcm] no token for ${deviceId}; cannot wake`);
+    log.warn('fcm_no_token', { deviceId });
     return { ok: false, reason: 'no-token' };
   }
   if (!messaging) {
-    console.log(`[fcm] (noop) would wake ${deviceId} with`, payload);
+    log.info('fcm_noop_wake', { deviceId });
     return { ok: false, reason: 'fcm-disabled' };
   }
 
@@ -57,7 +58,7 @@ async function wakeDevice(deviceId, payload) {
     if (e.code === 'messaging/registration-token-not-registered') {
       fcmTokens.delete(deviceId); // dead token; device must re-report
     }
-    console.error(`[fcm] send failed for ${deviceId}:`, e.message);
+    log.error('fcm_send_failed', { deviceId, error: e.message });
     return { ok: false, reason: e.code || 'send-failed' };
   }
 }
