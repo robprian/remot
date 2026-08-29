@@ -6,15 +6,15 @@ plugins {
 }
 
 android {
-    namespace = "com.remoteassist"
+    namespace = "com.remot.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.remoteassist"
-        minSdk = 26
+        applicationId = "com.remot.app"
+        minSdk = 25
         targetSdk = 35
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
 
         // Point the app at your signaling server. Override per build type as needed.
         buildConfigField("String", "SIGNALING_URL", "\"ws://10.0.2.2:8080\"")
@@ -31,6 +31,21 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 
+    // Optional release signing, driven by Gradle properties (see CI workflow):
+    //   -PkeystorePath=… -PkeystorePassword=… -PkeyAlias=… -PkeyPassword=…
+    // Without them the release APK builds unsigned. Keystores are never committed.
+    signingConfigs {
+        create("release") {
+            val path = providers.gradleProperty("keystorePath").orNull
+            if (path != null) {
+                storeFile = file(path)
+                storePassword = providers.gradleProperty("keystorePassword").get()
+                keyAlias = providers.gradleProperty("keyAlias").get()
+                keyPassword = providers.gradleProperty("keyPassword").get()
+            }
+        }
+    }
+
     buildTypes {
         debug {
             // 10.0.2.2 = host loopback from the Android emulator
@@ -40,6 +55,8 @@ android {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             buildConfigField("String", "SIGNALING_URL", "\"wss://signal.yourdomain.com\"")
+            val releaseSigning = signingConfigs.getByName("release")
+            if (releaseSigning.storeFile != null) signingConfig = releaseSigning
         }
     }
 }

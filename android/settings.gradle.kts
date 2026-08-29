@@ -15,5 +15,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "RemoteAssist"
+rootProject.name = "Remot"
 include(":app")
