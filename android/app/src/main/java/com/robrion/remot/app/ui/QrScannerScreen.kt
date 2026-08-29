@@ -36,7 +36,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
-import com.robrion.remot.session.SessionCodes
 import java.util.concurrent.Executors
 
 /**
@@ -158,9 +157,12 @@ private fun processFrame(
     val input = InputImage.fromMediaImage(media, proxy.imageInfo.rotationDegrees)
     scanner.process(input)
         .addOnSuccessListener { barcodes ->
+            // Forward ANY text barcode verbatim — session codes AND pairing QR
+            // payloads are distinguished by the caller (MainViewModel.onScanned).
             barcodes.firstOrNull { it.valueType == Barcode.TYPE_TEXT || it.rawValue != null }
                 ?.rawValue
-                ?.let { raw -> SessionCodes.parseScanned(raw)?.let(onCode) }
+                ?.takeIf { it.isNotBlank() }
+                ?.let(onCode)
         }
         .addOnCompleteListener { proxy.close() }
 }

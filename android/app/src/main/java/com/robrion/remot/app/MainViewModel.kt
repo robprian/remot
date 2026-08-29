@@ -27,7 +27,7 @@ import org.webrtc.EglBase
 import org.webrtc.VideoTrack
 
 /** Screens the single-activity UI can show. */
-enum class Screen { HOME, HOST_CODE, JOIN, SCAN, PAIRED, SAFETY_NUMBER, SESSION, SERVICES }
+enum class Screen { HOME, HOST_CODE, JOIN, SCAN, PAIRED, PAIR_QR, SAFETY_NUMBER, SESSION, SERVICES }
 
 private const val JOIN_TIMEOUT_MS = 45_000L
 
@@ -56,6 +56,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var safetyPeerPub by mutableStateOf<String?>(null); private set
 
     var remoteVideo by mutableStateOf<VideoTrack?>(null); private set
+
+    // pairing QR (host side of the authenticated pairing exchange)
+    var pairingQr by mutableStateOf<String?>(null); private set
 
     // controller-side connection progress
     var connecting by mutableStateOf(false); private set   // dialed, awaiting host consent
@@ -154,6 +157,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun goPaired() { screen = Screen.PAIRED }
     fun goServices() { refreshServiceStates(); screen = Screen.SERVICES }
 
+    // ---- pairing (QR exchange) ----
+
+    /**
+     * Begin pairing as the HOST: build a signed pairing offer and show it as a
+     * QR the other device scans. The other device completes the ECDH exchange,
+     * both verify proofs, and the safety number screen appears on ack.
+     */
+    fun startPairing() {
+        val offer = ServiceLocator.pairing.buildOffer(
+            hostName = "Remot device (${deviceFingerprint})",
+            relayUrl = ServiceLocator.signaling.signalingUrl,
+        )
+        pairingQr = offer.toJson()
+        screen = Screen.PAIR_QR
+    }
+
+    /** The pairing QR payload (JSON PairingOffer), or null when not pairing. */
+    fun pairingQrPayload(): String? = pairingQr
+
+    fun cancelPairing() { pairingQr = null; goPaired() }
+
     /** QR payload for the current session code, or null if none yet. */
     fun sessionQrPayload(): String? = sessionCode?.let { SessionCodes.toQrPayload(it) }
 
@@ -171,12 +195,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         startJoinTimeout()
     }
 
-    /** Handle a scanned QR: parse to a code, then dial. Returns false if unparseable. */
+    /**
+     * Handle a scanned QR. Two payload kinds are accepted:
+     *   - a 6-digit session code (`remot://join?code=…` or bare digits) → dial it.
+     *   - a PairingOffer JSON (host's pairing QR) → complete the ECDH pairing
+     *     exchange; the host verifies our proof and acks, which surfaces the
+     *     safety-number confirmation screen.
+     * Returns false when the raw text matched neither.
+     */
     fun onScanned(raw: String): Boolean {
-        val code = SessionCodes.parseScanned(raw) ?: run { joinError = "unreadable-qr"; screen = Screen.JOIN; return false }
-        screen = Screen.JOIN
-        connectWithCode(code)
-        return true
+        val code = SessionCodes.parseScanned(raw)
+        if (code != null) {
+            screen = Screen.JOIN
+            connectWithCode(code)
+            return true
+        }
+        return try {
+            val offer = com.robrion.remot.trust.PairingManager.PairingOffer.parse(raw)
+            ServiceLocator.pairing.completeFromScan(offer)
+            pairingQr = null
+            screen = Screen.PAIRED  // host ack -> safety number screen appears
+            true
+        } catch (e: Exception) {
+            joinError = "unreadable-qr"
+            screen = Screen.JOIN
+            false
+        }
     }
 
     fun connectToPaired(hostId: String) {
@@ -230,9 +274,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // ---- pairing confirmation ----
     fun confirmPairing() {
         safetyPeerPub?.let { ServiceLocator.pairing.confirm(it) }
+        pairingQr = null
         safetyNumber = null; safetyPeerPub = null; goPaired()
     }
-    fun rejectPairing() { safetyNumber = null; safetyPeerPub = null; goHome() }
+    fun rejectPairing() { pairingQr = null; safetyNumber = null; safetyPeerPub = null; goHome() }
 
     fun revokePeer(peer: PeerIdentity) {
         ServiceLocator.trust.remove(peer.peerPubKeyB64)

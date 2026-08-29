@@ -136,6 +136,13 @@ explicit platform-gated user action.
 - **Maintainer link in-app:** the Developer card on the System Services screen
   now shows a tappable **`@robprian ↗`** link that opens
   `https://github.com/robprian/remot`.
+- **"Pair a new device" button did nothing:** the button on the Paired devices
+  screen had an empty click handler. It now starts the real authenticated
+  pairing flow — the device shows its signed `PairingOffer` QR (new Pair QR
+  screen), and the other device scans it ("Scan a pairing code" button). The
+  QR scanner now forwards any text payload verbatim so both session codes and
+  pairing offers are recognised, completing the ECDH exchange and surfacing
+  the safety-number confirmation as before.
 
 #### Signaling end-to-end verified locally
 - The signaling server runs **locally** (`server/`, `node src/server.js`,

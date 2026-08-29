@@ -90,6 +90,7 @@ fun AppRoot(
                     onCancel = { vm.goJoin() },
                 )
                 Screen.PAIRED -> PairedDevicesScreen(vm)
+                Screen.PAIR_QR -> PairQrScreen(vm)
                 Screen.SAFETY_NUMBER -> SafetyNumberScreen(vm)
                 Screen.SESSION -> SessionScreen(vm)
                 Screen.SERVICES -> ServicesScreen(vm, onOpenAccessibilitySettings, onOpenNotificationSettings)
@@ -590,11 +591,46 @@ private fun PairedDevicesScreen(vm: MainViewModel) {
         }
 
         Spacer(Modifier.height(16.dp))
-        FilledTonalButton(onClick = { /* launch QR pairing flow (scanner) */ }) {
+        FilledTonalButton(onClick = { vm.startPairing() }) {
             Icon(Icons.Default.QrCode2, contentDescription = null)
             Spacer(Modifier.width(8.dp))
-            Text("Pair a new device")
+            Text("Pair a new device — show my QR")
         }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = { vm.goScan() }) {
+            Icon(Icons.Default.QrCodeScanner, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Scan a pairing code")
+        }
+    }
+}
+
+/** Host side of pairing: shows the signed PairingOffer QR the other device scans. */
+@Composable
+private fun PairQrScreen(vm: MainViewModel) {
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("Pair a new device", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Have the other device open Remot and scan this QR code.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(24.dp))
+        val payload = vm.pairingQrPayload()
+        if (payload != null) {
+            QrImage(text = payload, sizePx = 560, modifier = Modifier.size(240.dp))
+        }
+        Spacer(Modifier.height(16.dp))
+        Text("Expires in 2 minutes", style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(32.dp))
+        OutlinedButton(onClick = { vm.cancelPairing() }) { Text("Cancel") }
     }
 }
 
