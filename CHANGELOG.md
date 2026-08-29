@@ -77,6 +77,11 @@ latency plus WebRTC connection-route diagnostics.
 - Notification listener manifest (merged): exported=true + BIND_NOTIFICATION_LISTENER_SERVICE + intent-filter — PASS
 - STUN/TURN probe against local coturn with production credentials: STUN OK, TURN Allocate OK (measured ms) — PASS
 - Debug build / unit tests / lint / signed release build / apksigner verify — PASS (local)
+- **StunTurnProbe header parsing:** STUN responses were parsed with the magic
+  cookie read 2 bytes too early (past the message-length field), so every
+  Binding / Allocate response was rejected as a cookie/transaction mismatch and
+  real STUN/TURN health checks could never report online. Fixed by skipping the
+  header length field before the cookie; covered by the loopback unit tests.
 - Added unit tests for `ServiceStatus` (Settings.Secure component-list membership
   + installed/enabled/connected resolver) and `StunTurnProbe` (loopback mock
   STUN/TURN: binding, 401 challenge, authenticated Allocate, timeout, DNS

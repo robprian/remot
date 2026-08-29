@@ -134,6 +134,7 @@ class StunTurnProbe(
         if (data.size < 20) return false
         val bb = ByteBuffer.wrap(data)
         val type = bb.short.toInt() and 0xFFFF
+        bb.short // skip the 2-byte STUN header length field
         val cookie = bb.int
         val respTx = ByteArray(12).also { bb.get(it) }
         if (cookie != MAGIC_COOKIE) return false
@@ -172,6 +173,7 @@ class StunTurnProbe(
         if (data.size < 20) return null
         val bb = ByteBuffer.wrap(data)
         val type = bb.short.toInt() and 0xFFFF
+        bb.short // skip the 2-byte STUN header length field
         val cookie = bb.int
         val respTx = ByteArray(12).also { bb.get(it) }
         if (cookie != MAGIC_COOKIE || !respTx.contentEquals(txId)) return null
@@ -198,6 +200,7 @@ class StunTurnProbe(
         if (data.size < 20) return false
         val bb = ByteBuffer.wrap(data)
         val type = bb.short.toInt() and 0xFFFF
+        bb.short // skip the 2-byte STUN header length field
         val cookie = bb.int
         val respTx = ByteArray(12).also { bb.get(it) }
         return cookie == MAGIC_COOKIE && respTx.contentEquals(txId) && type == 0x0103
