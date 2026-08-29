@@ -32,7 +32,10 @@ node --env-file=.env src/server.js
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `PORT` | `8080` | Listen port |
+| `PORT` | `8080` | Cleartext ws listen port (legacy fallback) |
+| `WSS_ENABLED` | `false` | `true` to also serve a TLS WebSocket (`wss://`) |
+| `WSS_PORT` | `8443` | TLS WebSocket port |
+| `WSS_CERT_PATH` / `WSS_KEY_PATH` | `/etc/remot/wss/cert.pem` / `key.pem` | TLS cert/key PEMs |
 | `TURN_HOST` | `localhost` | Public hostname of the coturn server |
 | `TURN_SECRET` | `dev-only-change-me` | HMAC secret; MUST match coturn `static-auth-secret` |
 | `TURN_TTL_SEC` | `3600` | TURN credential lifetime |
@@ -133,7 +136,8 @@ In `infra/turnserver.conf` replace:
 
 | Port | Protocol | Purpose |
 | --- | --- | --- |
-| 8080 | TCP | Signaling / WebSocket |
+| 8080 | TCP | Signaling / WebSocket (cleartext ws fallback) |
+| 8443 | TCP | Signaling / WebSocket (**wss**, TLS) |
 | 3478 | UDP + TCP | STUN + TURN |
 | 5349 | TCP | TURNS (TLS) |
 | 49152–65535 | UDP | TURN relay allocations |
@@ -158,7 +162,8 @@ Expected (from the public internet):
 
 | Port | Protocol | Expected | Purpose |
 | --- | --- | --- | --- |
-| 8080 | TCP | open | Signaling / WebSocket |
+| 8080 | TCP | open | Signaling / WebSocket (ws fallback) |
+| 8443 | TCP | open | Signaling / WebSocket (**wss**, TLS) |
 | 3478 | UDP + TCP | open | STUN + TURN |
 | 5349 | TCP | open | TURNS (TLS) |
 | 49152–65535 | UDP | open | TURN relay allocations |
@@ -281,12 +286,35 @@ success.
 
 ## 3. TLS
 
-- Signaling: terminate TLS at your reverse proxy (Caddy/nginx) or run the
-  server behind it; the app expects `wss://`.
-- TURN: coturn terminates TLS directly with the Let's Encrypt certs
-  (`turns:` scheme). Until a certificate is provisioned, the signaling server
-  deliberately does **not** advertise `turns:` URLs (see `server/src/turn.js`)
-  so clients never waste time on a TURNS endpoint that cannot connect.
+### Signaling (`wss://`)
+
+The signaling server can serve **both** a cleartext WebSocket (default `:8080`)
+**and** a TLS WebSocket (`:8443`) from the same process — set `WSS_ENABLED=true`,
+`WSS_CERT_PATH` / `WSS_KEY_PATH` to a cert/key PEM pair, then open `8443` in the
+security group. The app always **prefers the wss://:8443** endpoint for every
+host and falls back to ws://:8080 only if TLS is unreachable.
+
+Two certificate options:
+
+- **Let's Encrypt (primary):** obtain a real public cert for the signaling
+  hostname (e.g. `turn.robrion.net`) and point `WSS_CERT_PATH`/`WSS_KEY_PATH`
+  at it. Issue with `certbot --standalone -d turn.robrion.net` (opens port 80
+  for HTTP-01) or a DNS-01 plugin, and renew via `certbot renew` + a systemd
+  timer/reload hook. The app validates it against the Android system trust
+  store.
+- **Remot private CA (servers with no domain, e.g. the backup IP):** generate a
+  Remot CA + a server leaf cert (SAN = the IP), and bundle the CA **public**
+  cert in the app at `res/raw/remot_ca.pem`. The app adds it to its trust
+  anchors (system CAs UNION the Remot CA) so the self-signed backup validates
+  while a public-cert primary still works. The private CA key stays
+  server-side only.
+
+### TURN
+
+- coturn terminates TLS directly with a certificate (`turns:` scheme). Until a
+  certificate is provisioned, the signaling server deliberately does **not**
+  advertise `turns:` URLs (see `server/src/turn.js`) so clients never waste
+  time on a TURNS endpoint that cannot connect.
 
 ---
 

@@ -1,7 +1,9 @@
 'use strict';
 
 const crypto = require('crypto');
+const fs = require('fs');
 const http = require('http');
+const https = require('https');
 const { WebSocketServer } = require('ws');
 const cfg = require('./config');
 const log = require('./log');
@@ -42,21 +44,61 @@ function joinRateLimited(ip) {
   return false;
 }
 
-function start() {
-  // HTTP server hosts the WebSocket upgrade AND a small health endpoint.
-  const server = http.createServer((req, res) => {
-    if (req.method === 'GET' && (req.url === '/healthz' || req.url === '/health')) {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', uptimeSec: Math.round(process.uptime()), devices: S.devices.size }));
-      return;
-    }
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'not found' }));
-  });
+function healthHandler(req, res) {
+  if (req.method === 'GET' && (req.url === '/healthz' || req.url === '/health')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', uptimeSec: Math.round(process.uptime()), devices: S.devices.size }));
+    return;
+  }
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'not found' }));
+}
 
-  const wss = new WebSocketServer({ server });
+// Shared metadata used for per-connection state, independent of transport.
+const CONNECTIONS = new Set();
+
+function start() {
+  const servers = [];
+
+  // One WebSocketServer, attached to multiple http(s) servers via providedServer
+  // is not supported — instead we upgrade each underlying server ourselves so a
+  // single WebSocketServer can serve both the plaintext and TLS endpoints.
+  const wss = new WebSocketServer({ noServer: true });
+
+  function onUpgrade(request, socket, head) {
+    wss.handleUpgrade(request, socket, head, (ws) => wss.emit('connection', ws, request));
+  }
+
+  function makeHttpListener() {
+    return (req, res) => healthHandler(req, res);
+  }
+
+  // Plaintext endpoint (graceful fallback for very old clients).
+  const httpServer = http.createServer(makeHttpListener());
+  httpServer.on('upgrade', onUpgrade);
+  servers.push(httpServer);
+
+  // TLS endpoint (wss://) — only when enabled and certs are readable.
+  if (cfg.wss.enabled) {
+    const cert = cfg.wssCert();
+    const key = cfg.wssKey();
+    if (cert && cert.length && key && key.length) {
+      try {
+        const tlsServer = https.createServer({ cert, key }, makeHttpListener());
+        tlsServer.on('upgrade', onUpgrade);
+        servers.push(tlsServer);
+        log.info('wss_enabled', { port: cfg.wss.port });
+      } catch (e) {
+        log.warn('wss_disabled_invalid_cert', { error: e.message });
+      }
+    } else {
+      log.warn('wss_disabled_missing_cert', {});
+    }
+  }
 
   wss.on('connection', (ws, req) => {
+    CONNECTIONS.add(ws);
+    ws.on('close', () => CONNECTIONS.delete(ws));
     ws.deviceId = null;
     ws.ip = req.socket.remoteAddress;
     ws.isAlive = true;
@@ -88,15 +130,14 @@ function start() {
     });
   });
 
-  // Liveness ping — drop half-open sockets.
+  // Liveness ping — drop half-open sockets (across every transport).
   const ping = setInterval(() => {
-    wss.clients.forEach((ws) => {
+    CONNECTIONS.forEach((ws) => {
       if (!ws.isAlive) return ws.terminate();
       ws.isAlive = false;
       ws.ping();
     });
   }, 30000);
-  wss.on('close', () => clearInterval(ping));
 
   // Prune expired codes, pending wakes, and rate-limit windows.
   const prune = setInterval(() => {
@@ -106,21 +147,26 @@ function start() {
     for (const [ip, t] of S.joinAttempts) if (t[t.length - 1] < now - 60_000) S.joinAttempts.delete(ip);
   }, 15000);
 
-  server.listen(cfg.port, () => log.info('signaling_listening', { port: cfg.port }));
+  httpServer.listen(cfg.port, () => log.info('signaling_listening', { port: cfg.port, tls: cfg.wss.enabled }));
+  if (cfg.wss.enabled) servers[1].listen(cfg.wss.port, (err) => {
+    if (err) log.error('wss_listen_error', { error: err.message });
+    else log.info('wss_listening', { port: cfg.wss.port });
+  });
 
   // Graceful shutdown: stop timers, close sockets with 1001, exit.
   const shutdown = (signal) => {
     log.info('shutdown', { signal });
     clearInterval(ping);
     clearInterval(prune);
-    wss.clients.forEach((ws) => ws.close(1001, 'server shutdown'));
-    server.close(() => process.exit(0));
+    CONNECTIONS.forEach((ws) => { try { ws.close(1001, 'server shutdown'); } catch {} });
+    let left = servers.length;
+    for (const s of servers) s.close(() => { if (--left === 0) process.exit(0); });
     setTimeout(() => process.exit(0), 5000).unref();
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  return server;
+  return httpServer;
 }
 
 async function handle(ws, m) {

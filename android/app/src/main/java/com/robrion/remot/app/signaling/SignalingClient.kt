@@ -14,6 +14,14 @@ import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.InetAddress
+import java.security.KeyStore
+import java.security.SecureRandom
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocketFactory
+import javax.net.ssl.TrustManagerFactory
+import javax.net.ssl.X509TrustManager
 
 /**
  * WebSocket signaling client with automatic reconnect + re-register. Registration
@@ -22,6 +30,7 @@ import java.net.InetAddress
  * decoded messages to a [Listener]. All send helpers are fire-and-forget JSON.
  */
 class SignalingClient(
+    private val context: android.content.Context,
     private val urls: List<String>,
     private val deviceId: String,
     private val listener: Listener,
@@ -91,10 +100,62 @@ class SignalingClient(
         }
     }
 
-    private val client = OkHttpClient.Builder()
-        .dns(ipv4FirstDns)
-        .pingInterval(20, java.util.concurrent.TimeUnit.SECONDS)
-        .build()
+    private val client: OkHttpClient = run {
+        val builder = OkHttpClient.Builder()
+            .dns(ipv4FirstDns)
+            .pingInterval(20, java.util.concurrent.TimeUnit.SECONDS)
+        // Trust the embedded Remot CA (for the self-signed secondary wss endpoint)
+        // IN ADDITION to the Android system trust store, so a Let's Encrypt primary
+        // (which validates against the system store) still works unchanged. The
+        // hostname is still checked normally; we only add our CA as an extra
+        // anchor — we never accept untrusted chains from strangers.
+        val ssl = trustedSslContext()
+        if (ssl != null) {
+            builder.sslSocketFactory(ssl.first, ssl.second)
+        }
+        builder.build()
+    }
+
+    /**
+     * Builds an [SSLSocketFactory] + [X509TrustManager] whose trust anchors are the
+     * Android system CAs UNION the embedded Remot CA (res/raw/remot_ca.pem). Returns
+     * null when the CA resource can't be read, in which case OkHttp uses its default
+     * (system-only) trust — a cleartext-only/older install stays fully functional.
+     */
+    private fun trustedSslContext(): Pair<SSLSocketFactory, X509TrustManager>? = runCatching {
+        val systemTm = defaultTrustManager()
+        val anchors = KeyStore.getInstance(KeyStore.getDefaultType())
+        anchors.load(null)
+        systemTm.acceptedIssuers.forEach { anchors.setCertificateEntry(it.subjectDN.name, it) }
+
+        val remotCa = loadRemotCaCert()
+        if (remotCa != null) {
+            anchors.setCertificateEntry("remot-ca", remotCa)
+        } else {
+            return null // nothing to pin — use OkHttp defaults
+        }
+
+        val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
+        tmf.init(anchors)
+        val tm = tmf.trustManagers.toList().filterIsInstance<X509TrustManager>().first()
+        val ctx = SSLContext.getInstance("TLS")
+        ctx.init(null, arrayOf<X509TrustManager>(tm), SecureRandom())
+        ctx.socketFactory to tm
+    }.getOrNull()
+
+    private fun defaultTrustManager(): X509TrustManager {
+        val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
+        tmf.init(null as KeyStore?)
+        return tmf.trustManagers.toList().filterIsInstance<X509TrustManager>().first()
+    }
+
+    /** Reads our embedded Remot CA cert, or null if absent/unreadable. */
+    private fun loadRemotCaCert(): X509Certificate? = runCatching {
+        val input = context.resources.openRawResource(com.robrion.remot.R.raw.remot_ca)
+        val factory = CertificateFactory.getInstance("X.509")
+        input.use { factory.generateCertificate(it) as X509Certificate }
+    }.getOrNull()
+
     private var ws: WebSocket? = null
     private var reconnectAttempt = 0
     private var closedByUser = false

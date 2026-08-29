@@ -12,6 +12,53 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C004P06 — 2026-08-30
+
+### Summary
+
+Moves signaling from cleartext `ws://` to TLS `wss://`. The signaling server
+now serves a TLS WebSocket on **8443** (in addition to the plain 8080
+fallback), the app prefers the `wss://` endpoint for every host and trusts the
+embedded Remot CA for the self-signed backup server, and the Let's Encrypt
+path (via `turn.robrion.net`) is prepared for the primary. No more signaling
+conversations sent in cleartext.
+
+### Added
+
+- **Server TLS support:** `server.js` now serves both a plaintext HTTP/WS on
+  :8080 and an HTTPS/WSS on :8443 from a single shared WebSocket server,
+  gated by `WSS_ENABLED` / `WSS_PORT` / `WSS_CERT_PATH` / `WSS_KEY_PATH` env
+  vars in `config.js`. Liveness ping, graceful shutdown, and health endpoint
+  apply to both transports.
+- **Embedded Remot CA:** a private CA public cert (`res/raw/remot_ca.pem`) is
+  bundled for the self-signed backup endpoint; `SignalingClient` builds an
+  OkHttp `SSLContext` whose trust anchors are the system CAs UNION the Remot
+  CA, so a self-signed backup server validates while a Let's Encrypt primary
+  still works unchanged. Falls back to plain OkHttp trust if the CA is absent.
+- **wss-preferred endpoint chain:** `signalingUrlCandidates` now tries
+  `wss://<host>:8443` first for every host (primary host, direct IP, alt host,
+  alt IP), then the legacy `ws://` :8080 form, keeping signaling reachable and
+  encrypted in one pass.
+
+### Changed
+
+- Provisioned a Remot private CA (CA + server leaf certs) for the secondary
+  server (`103.250.10.238`) and a primary leaf cert (SAN `turn.robrion.net` +
+  IP) so wss://:8443 works on both hosts immediately.
+- Bumped production version to **V2C004P06** (versionCode 200406).
+
+### Ops (deployed on both servers)
+
+- Primary (`remot-signaling.service`) and secondary both now listen on 8443
+  for wss:: verified active + `ss -lntp` shows :8443; wss register round-trip
+  verified on both.
+- Let's Encrypt path prepared (certbot installed). To issue/renew a real
+  public cert for `turn.robrion.net`, open **TCP 80** (HTTP-01 validation)
+  and **TCP 8443** (wss) in the primary's cloud security group; a renew
+  systemd/cron timer will keep the cert fresh. Until then the Remot-CA
+  (pinned in the app) secures the primary wss endpoint.
+
+---
 ## V2C004P05 — 2026-08-30
 
 ### Summary
@@ -759,4 +806,3 @@ the full documentation and release pipeline.
 - Android: `SignalingClient` presents `DeviceIdentity.publicKeyB64()` on
   register and stops auto-reconnecting after a permanent registration rejection.
 - Input: `long-press` maps to a 600 ms gesture stroke on the host.
-

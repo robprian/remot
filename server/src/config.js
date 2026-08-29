@@ -1,8 +1,28 @@
 'use strict';
 
+const fs = require('fs');
+
 // Centralized configuration, sourced from environment with sane local defaults.
+function readKeyValue(path, defaultVal) {
+  if (!path) return defaultVal ?? '';
+  try { return fs.readFileSync(path); } catch { return defaultVal ?? ''; }
+}
+
 module.exports = {
   port: parseInt(process.env.PORT || '8080', 10),
+
+  // TLS (wss://): serve an HTTPS WebSocket endpoint on wssPort (8843 by default)
+  // when WSS_ENABLED=true and cert/key files are readable. The plaintext ws://
+  // server on `port` keeps running as a graceful fallback for very old clients.
+  wss: {
+    enabled: process.env.WSS_ENABLED === 'true',
+    port: parseInt(process.env.WSS_PORT || '8443', 10),
+    certPem: process.env.WSS_CERT_PATH || '/etc/remot/wss/cert.pem',
+    keyPem: process.env.WSS_KEY_PATH || '/etc/remot/wss/key.pem',
+  },
+  // Read the PEMs lazily so the service can start before certs appear (renewal).
+  wssCert: () => readKeyValue(module.exports.wss.certPem),
+  wssKey: () => readKeyValue(module.exports.wss.keyPem),
 
   // TURN (coturn) — must match infra/turnserver.conf
   turn: {

@@ -52,7 +52,7 @@ object ServiceLocator : SignalingClient.Listener {
         core = WebRtcCore(appContext)
         trust = TrustStore.create(appContext)
         grants = GrantStore.create(appContext)
-        signaling = SignalingClient(signalingUrlCandidates(signalingUrl), deviceId, this)
+        signaling = SignalingClient(appContext, signalingUrlCandidates(signalingUrl), deviceId, this)
         session = SessionManager(appContext, core, signaling, trust, scope)
         pairing = PairingManager(signaling, trust)
         networkHealth = NetworkHealthRepository(appContext, scope)
@@ -112,43 +112,54 @@ object ServiceLocator : SignalingClient.Listener {
     /**
      * Builds the ordered list of signaling endpoints the client tries in turn.
      *
-     * The primary URL is the compiled SIGNALING_URL. If it cannot connect (e.g.
-     * a hostname that resolves to unroutable IPv6 first, or a cleartext-blocked
-     * network), the client falls back to:
-     *   1. a wss:// variant of the same host:port (if the primary was ws://),
-     *   2. a ws:// direct endpoint to BuildConfig.SERVER_IP (when configured),
-     *   3. a wss:// direct endpoint to that IP,
-     *   4. BuildConfig.SERVER_URL_ALT (a full secondary/backup URL, when supplied),
-     *   5. ws:// + wss:// direct endpoints to BuildConfig.SERVER_IP_ALT (backup IP).
-     * This keeps signaling reachable when a partial route (IPv6, carrier NAT) or a
-     * primary-server outage blocks the main path, without hardcoding any address
-     * in source (addresses come from GitHub Secrets at build time).
+     * TLS (wss://) is preferred so signaling is not sent in cleartext. For each
+     * host we try the :8443 TLS endpoint first, then the legacy ws:// :8080 form
+     * (kept for very old servers), then rotate across the fallback hosts. This
+     * keeps signaling reachable through carrier NAT / partial routes / a primary
+     * outage without hardcoding any address in source (addresses come from
+     * GitHub Secrets at build time; the TLS path trusts the embedded Remot CA
+     * for self-signed backup servers and the system store for Let's Encrypt).
      */
     private fun signalingUrlCandidates(primary: String): List<String> {
         val out = LinkedHashSet<String>()
         val ipAlt = BuildConfig.SERVER_IP_ALT
         val urlAlt = BuildConfig.SERVER_URL_ALT
-        out.add(primary)
+        val ip = BuildConfig.SERVER_IP
+
+        /** Adds wss:// on the TLS port (8443), then ws:// on the plain port. */
+        fun candidates(host: String, originalPort: Int, path: String) {
+            val plainPort = if (originalPort == 80 || originalPort == 443 || originalPort == 8443) 8080 else originalPort
+            // Prefer TLS :8443 for this host, then a ws:// form, then any wss:// on
+            // the URL's own port (harmless if it equals 8443).
+            out.add("wss://$host:8443$path")
+            out.add("ws://$host:$plainPort$path")
+            if (originalPort != 8443) out.add("wss://$host:$originalPort$path")
+        }
+
         try {
             val u = URI(primary)
             val host = u.host ?: return out.toList()
             val port = if (u.port in 1..65535) u.port else if (u.scheme == "wss") 443 else 80
             val path = u.rawPath?.takeIf { it.isNotBlank() } ?: ""
 
-            if (u.scheme == "ws") out.add("wss://$host:$port$path")
-            val ip = BuildConfig.SERVER_IP
-            if (ip.isNotBlank()) {
-                out.add("ws://$ip:$port$path")
-                if (u.scheme == "ws") out.add("wss://$ip:$port$path")
-            }
+            candidates(host, port, path)
+            if (ip.isNotBlank()) candidates(ip, port, path)
+
             // Backup/alternate endpoints from GitHub Secrets.
-            if (urlAlt.isNotBlank()) out.add(urlAlt)
-            if (ipAlt.isNotBlank()) {
-                out.add("ws://$ipAlt:$port")
-                if (u.scheme == "ws") out.add("wss://$ipAlt:$port")
+            if (urlAlt.isNotBlank()) {
+                try {
+                    val av = URI(urlAlt)
+                    val aside = av.host ?: urlAlt
+                    val aport = if (av.port in 1..65535) av.port else 8080
+                    candidates(aside, aport, av.rawPath?.takeIf { it.isNotBlank() } ?: "")
+                } catch (e2: Exception) {
+                    out.add(urlAlt)
+                }
             }
+            if (ipAlt.isNotBlank()) candidates(ipAlt, port, path)
         } catch (e: Exception) {
             // fall back to only the primary (plus any alternate URL that parsed)
+            out.add(primary)
             if (urlAlt.isNotBlank()) out.add(urlAlt)
         }
         return out.toList()
