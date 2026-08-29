@@ -271,7 +271,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val release = (updateState as? UpdateInfoState.Available)?.release ?: return
         updateState = UpdateInfoState.Downloading(release, 0)
         viewModelScope.launch(Dispatchers.IO) {
-            val app = getApplication()
+            val app: Application = getApplication()
             try {
                 val file = ApkInstaller.targetFile(app, release.apkName)
                 ApkInstaller.download(app, updateHttp, release.apkUrl, file) { pct ->
