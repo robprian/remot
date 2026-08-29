@@ -1,197 +1,283 @@
 # Remot
 
-**Android-to-Android remote control over the Internet.**
+### Remote Android Control — Anywhere, Over the Internet
 
+Remot is an Android remote-control platform that securely connects two Android
+devices over the Internet. It streams the screen over **WebRTC** and injects
+touch and keyboard input through Android's **AccessibilityService**, using a
+signaling broker plus **STUN/TURN** so devices behind NAT and carrier CGNAT can
+still connect.
+
+[Features](#features) · [Architecture](#architecture) · [Requirements](#requirements) ·
+[Installation](#installation) · [Usage](#usage) · [Network](#network-architecture) ·
+[Building](#building) · [Releases](#releases) · [Changelog](./CHANGELOG.md) ·
+[Security](#security) · [Development](#development) · [Roadmap](#roadmap) ·
+[Contributing](#contributing) · [License](#license)
+
+[![Build](https://img.shields.io/github/actions/workflow/status/robprian/remot/build.yml?branch=main&label=build)](https://github.com/robprian/remot/actions)
+[![Release](https://img.shields.io/github/v/release/robprian/remot)](https://github.com/robprian/remot/releases)
+![Android](https://img.shields.io/badge/Android-7.1%2B-3ddc84?logo=android)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Remot lets one Android device securely view and control another Android device
-— across the room or across the world. It is a consent-first remote-support
-tool (comparable to AnyDesk / TeamViewer QuickSupport) built entirely on public
-Android APIs: **MediaProjection** for screen capture, **AccessibilityService**
-for input injection, and **WebRTC** (DTLS-SRTP) for end-to-end-encrypted
-transport.
+---
 
-- **No root. No hidden APIs.** Remote control uses only legitimate platform APIs.
-- **Consent-first:** the controlled device always approves a session, and a
-  persistent notification is shown the whole time access is active.
-- **Peer-to-peer media:** the signaling server only brokers connection setup —
-  it never sees your screen.
-- **Android 7.1 → Android 16** (see `docs/ANDROID_COMPATIBILITY.md`).
+## Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Permissions](#permissions)
+- [Network Architecture](#network-architecture)
+- [Building](#building)
+- [Releases](#releases)
+- [Project Status](#project-status)
+- [Security](#security)
+- [Development](#development)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
+## Overview
+
+Remot is built entirely on public Android platform APIs — no root, no hidden
+hooks. One device (the **host**) shares its screen and accepts input; another
+device (the **controller**) views and controls it. Sessions are consent-first:
+the host always approves before access begins and a persistent notification
+clearly shows that control is active.
+
+**Current version:** [V2C003][releases-latest] · see [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
 ## Features
 
-| | |
-|---|---|
-| Screen sharing | Live MediaProjection capture streamed over WebRTC (H.264/VP8, hardware encoding) |
-| Remote control | Tap, long-press, swipe/drag, Back/Home/Recents, text input via AccessibilityService |
-| Pairing | QR + authenticated ECDH pairing with out-of-band safety-number verification |
-| Unattended access | Scoped, expiring, revocable grants for trusted paired devices (optional) |
-| NAT traversal | STUN + coturn TURN with time-limited credentials; relay only when P2P fails |
-| Reconnection | ICE restart on network change; no black screen, no re-consent |
-| Security | Hardware-backed P-256 identity, signed registration, DTLS-fingerprint MITM protection, encrypted trust store |
-| Device wake | Optional FCM high-priority push wakes an offline host for an incoming session |
-
-## Requirements
-
-- **Controller + host:** two Android devices (or two emulators with network
-  setup), Android 7.1+.
-- **Signaling server:** Node.js ≥ 18, reachable by both devices (`wss://` in
-  production).
-- **TURN (cross-network):** coturn on a host with a public IP (see
-  `infra/README.md`). Two phones on different networks almost always need it
-  (carrier CGNAT blocks P2P).
+- **Android-to-Android remote control** over the Internet.
+- **WebRTC transport** — encrypted media and control over DTLS-SRTP.
+- **STUN/TURN NAT traversal** — direct P2P when possible, TURN relay as a fallback.
+- **Remote interaction** via Android AccessibilityService: tap, long-press,
+  swipe/drag, Back/Home/Recents, and text input.
+- **Notification Listener integration** to surface host notifications to an
+  active session.
+- **Consent-first sessions** with one-time codes, QR join, and optional
+  unattended access for trusted paired devices.
+- **Connection health monitoring** — Internet, Signaling, STUN, and TURN status
+  with **real measured TURN latency** (never faked from DNS or config).
+- **WebRTC route diagnostics** — shows whether the active session uses a direct
+  path, STUN (`server-reflexive`), or a TURN relay.
+- **In-app updates** — detects a newer published release and can download and
+  install it from GitHub Releases.
+- **Android 7.1 → 16** compatibility (see [docs/ANDROID_COMPATIBILITY.md](docs/ANDROID_COMPATIBILITY.md)).
 
 ---
 
-## Quick start
+## Architecture
 
-### 1. Run the signaling server
-
-```bash
-cd server
-npm ci
-npm run smoke      # 12+ protocol checks, no Android needed
-npm start          # ws://0.0.0.0:8080
+```
+                 Internet
+                    │
+          ┌─────────┴─────────┐
+          │                   │
+    Android A            Android B
+    (Controller)           (Host)
+          │                   │
+          └─────────┬─────────┘
+                    │
+             Signaling server        (brokers setup, pairing, codes)
+                    │
+              STUN / TURN            (NAT traversal)
+                    │
+                 WebRTC               (encrypted media + control)
 ```
 
-Configure via environment (`server/.env.example`). FCM is optional and off by
-default; attended sessions need no wake.
+- **Host** — captures its screen with `MediaProjection` and receives input via
+  an AccessibilityService bound by the system.
+- **Controller** — renders the host's live video and sends gestures/keys over a
+  WebRTC data channel.
+- **Signaling server** — brokers registration, session codes, pairing, and
+  WebRTC offers/answers/ICE. It sees metadata only, never your screen.
+- **STUN/TURN** — STUN discovers direct paths; TURN relays encrypted media only
+  when a direct path is unavailable.
 
-### 2. Build the Android app
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
+[docs/REMOTE_PROTOCOL.md](docs/REMOTE_PROTOCOL.md) for details.
+
+---
+
+## Requirements
+
+- **Two Android devices** (Android 7.1+), each running the Remot APK.
+- A **signaling server** reachable by both devices over the network.
+- **TURN** (coturn) for cross-network sessions behind carrier CGNAT.
+
+---
+
+## Installation
+
+1. Download the latest production APK from
+   [GitHub Releases][releases-latest]. The APK is **built, signed, and
+   validated by the GitHub Actions production pipeline** — never by hand.
+2. Install it on both devices and allow installs from this source if prompted.
+3. On first run, grant **Notification access** and enable the **Remot Control
+   Service** under *Accessibility settings* (needed to control the host).
+
+---
+
+## Usage
+
+1. **Host:** tap **Share my screen** and approve the consent and screen-capture
+   dialogs. A 6-digit code (and QR) appears.
+2. **Controller:** tap **Connect**, enter the code (or scan the QR).
+3. The host approves; the controller sees the live screen and can tap, swipe,
+   long-press, press Back/Home/Recents, and type.
+4. Either side taps **End session**; the notification clears and the session
+   closes.
+
+For unattended access to a trusted paired device, pair once and grant access.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+---
+
+## Permissions
+
+Remot requests only the permissions it actually uses:
+
+| Permission / capability     | Purpose                                              |
+| --------------------------- | ---------------------------------------------------- |
+| `MediaProjection`           | Share the host's screen                               |
+| `AccessibilityService`      | Inject taps, swipes, keys, and text (system-gated)    |
+| `NotificationListener`      | Surface host notifications during a session           |
+| Internet / Network state    | Signaling + WebRTC connectivity                       |
+| Camera (optional)           | Scan a session QR                                     |
+| `REQUEST_INSTALL_PACKAGES`  | Install an in-app update                              |
+
+None of the captured screen content, notifications, or input is uploaded to any
+server — media flows peer-to-peer (or through a TURN relay) and stays encrypted.
+
+---
+
+## Network Architecture
+
+Remot uses **WebRTC** with **STUN/TURN** so devices behind carrier CGNAT can
+still connect across the Internet. STUN enables direct P2P discovery; TURN
+relays encrypted media only when no direct path exists. Time-limited TURN
+credentials are issued at runtime by the signaling server — the APK never ships
+with a TURN secret embedded.
+
+See [docs/ANDROID_COMPATIBILITY.md](docs/ANDROID_COMPATIBILITY.md) and the
+infrastructure notes in `infra/` for deployment details.
+
+---
+
+## Building
+
+Production APKs are built on **GitHub-hosted GitHub Actions runners**:
+
+- `build.yml` — runs tests, lint, `assembleRelease`, signs with the production
+  keystore from GitHub Secrets, validates the APK, and uploads it as an
+  artifact.
+- `release.yml` — runs only after a **successful** Build, downloads that exact
+  artifact, re-validates it, and publishes it to GitHub Releases.
+
+The project does **not** build the Android app on its production/infrastructure
+server; that server runs runtime services (signaling, TURN) only. Local
+development builds work with Android Studio:
 
 ```bash
 cd android
 ./gradlew :app:assembleDebug
+./gradlew :app:testDebugUnitTest
 ```
 
-Debug builds connect to `ws://10.0.2.2:8080` (emulator → host loopback) by
-default. For two real devices, supply a `SIGNALING_URL` at build time (Gradle
-property or `SIGNALING_URL` env / GitHub secret) pointing at your deployed
-`wss://` signaling endpoint. See `docs/DEVELOPMENT.md`.
-
-### 3. Pair and connect
-
-1. **Host:** tap **Share my screen** → approve the consent dialog and the
-   Android screen-capture dialog. A 6-digit code (+ QR) appears.
-2. **Controller:** tap **Connect**, enter the code (or scan the QR).
-3. The host approves; the controller sees the live screen and can tap, swipe,
-   long-press, press Back/Home/Recents, and type text.
-4. Either side taps **End session**; the notification clears and the
-   connection closes.
-
-For **unattended access**, set up a standing grant on the host for a paired
-device (requires pairing first). See `docs/ARCHITECTURE.md`.
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full build, test, and
+release process, and [docs/VERSIONING.md](docs/VERSIONING.md) for the V/C/P
+version scheme.
 
 ---
 
-## NAT traversal / TURN
+## Releases
 
-Remot uses WebRTC with STUN/TURN for NAT traversal so that devices behind
-carrier CGNAT can still connect across the Internet. STUN enables direct P2P
-discovery; TURN relays encrypted media only when a direct P2P path isn't
-available. Time-limited TURN credentials are issued at runtime by the signaling
-server — the app never ships with a TURN secret embedded.
+- **Latest production APK:** [Download latest release][releases-latest]
+- **All releases:** [View GitHub Releases][releases]
+- **Full version history:** [CHANGELOG.md](./CHANGELOG.md)
 
-See `infra/README.md` for deployment and verification details (opening the
-STUN/TURN listener and relay port range, plus a trickle-ICE test).
+Release APKs follow a deterministic name, for example `remot-V2C003.apk`.
 
 ---
 
-## How a session flows
+## Changelog
 
-```
-Host taps "Share my screen" ──host-open──► server ──► 6-digit code shown
-Controller enters code ──join──► server ──join-request──► Host
-Host: consent dialog → MediaProjection dialog → ScreenCaptureService (FGS)
-Host ──offer(+signed fingerprint)──► server ──► Controller ──answer──► Host
-      ICE via STUN/coturn ──► P2P (or relayed)
-Controller sees screen; gestures/keys ──DataChannel──► Host AccessibilityService
-Either side ends ──► hangup, PeerConnection closes, FGS stops
-```
-
-Bidirectional: both roles ship in one APK; whichever device runs **Share my
-screen** is the controlled one for that session.
+See the complete, authoritative release history in **[CHANGELOG.md](./CHANGELOG.md)**.
+Newest versions are always listed first; historical versions are never deleted.
 
 ---
 
-## Repository layout
+## Project Status
 
-```
-├── android/                  # Kotlin / Jetpack Compose app
-│   └── app/src/main/java/com/robrion/remot/
-│       ├── RemoteApp.kt          # Application: init + FCM token
-│       ├── ServiceLocator.kt     # manual DI + signaling listener fan-out
-│       ├── MainActivity.kt       # Compose host + permission launchers
-│       ├── MainViewModel.kt      # UI state + intents
-│       ├── crypto/ identity/ trust/ unattended/
-│       ├── signaling/ webrtc/ session/
-│       ├── host/ fcm/            # capture, input, wake services
-│       └── ui/                   # Compose screens
-├── server/                   # Node.js signaling + pairing broker + FCM wake
-│   ├── src/server.js         # WebSocket message router + health + rate limits
-│   ├── src/state.js          # in-memory broker state
-│   ├── src/turn.js           # time-limited TURN credentials
-│   ├── src/fcm.js            # optional Firebase wake
-│   └── test/smoke.js         # end-to-end protocol test (no Android needed)
-├── infra/
-│   ├── turnserver.conf       # coturn config (STUN/TURN)
-│   └── README.md             # deployment: server, coturn, firewall, TLS
-├── docs/                     # AUDIT, ARCHITECTURE, SECURITY, COMPATIBILITY,
-│                             # REMOTE_PROTOCOL, DEVELOPMENT
-└── CHANGELOG.md
-```
+Remot is under active development. Production builds are generated and
+validated automatically through GitHub Actions. The core remote-control flow is
+functional; expect ongoing compatibility, diagnostics, and device-management
+improvements.
 
-## Documentation
+---
 
-| Document | Contents |
-| --- | --- |
-| `docs/AUDIT.md` | Technical audit of the source project + capability matrix |
-| `docs/ARCHITECTURE.md` | System, Android, server, transport, data flow |
-| `docs/SECURITY.md` | Security model, threats, mitigations |
-| `docs/ANDROID_COMPATIBILITY.md` | Android 7.1–16 support + platform limitations |
-| `docs/REMOTE_PROTOCOL.md` | Signaling + control protocol reference |
-| `docs/VERSIONING.md` | V/C/P production versioning + versionCode mapping |
-| `docs/DEVELOPMENT.md` | Build, test, release, CI workflow |
-| `docs/INFRASTRUCTURE.md` | GitHub Actions vs. runtime-server responsibilities |
-| `infra/README.md` | Signaling + TURN deployment, firewall, TLS |
+## Security
 
-## Production versioning
+- WebRTC is used for media/data transport, encrypted end to end.
+- TURN is used only when direct connectivity is unavailable; media remains
+  encrypted through the relay.
+- Sensitive credentials are **never** stored in the repository or compiled into
+  the APK.
+- Production signing credentials are stored in **GitHub Secrets**
+  (`RELEASE_KEYSTORE_*`); the keystore is never committed.
+- Infrastructure secrets and IP addresses must never be committed.
 
-Remot uses a three-level production version: `V{major}C{change}P{patch}`
-(e.g. `V1C001`, `V1C001P01`). The current version is **V2C002** (versionCode
-200200). Git tags are lowercase (`v1c001`), Android `versionName` matches the
-production identifier, and the release workflow triggers only on such tags.
-Full spec and the versionCode mapping: `docs/VERSIONING.md`.
+See [docs/SECURITY.md](docs/SECURITY.md) for the full threat model.
 
-## Security model (summary)
+---
 
-- **Identity:** per-install P-256 keypair in Android Keystore; the public key
-  IS the device ID.
-- **Signed registration:** the signaling server only registers a device after
-  verifying `deviceId == SHA-256(pubkey)` and a signature over a fresh
-  challenge — identity hijacking is not possible.
-- **Pairing:** authenticated ECDH + mutual identity proofs + an out-of-band
-  safety number users compare.
-- **Media:** DTLS-SRTP end to end; peers sign their DTLS fingerprints with
-  their identity keys, so a compromised signaling server cannot MITM a paired
-  session.
-- **Sessions:** one-time 6-digit codes (5 min TTL) + explicit host consent;
-  paired dials require an existing trusted pairing.
-- **Unattended grants:** scoped, expiring, revocable, referencing a paired
-  identity only.
-- No secrets in the repo; `.env` git-ignored. Full model: `docs/SECURITY.md`.
+## Development
 
-## Known Android limitations
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — build, test, and release process.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system and transport design.
+- [docs/REMOTE_PROTOCOL.md](docs/REMOTE_PROTOCOL.md) — signaling/control protocol.
+- [docs/ANDROID_COMPATIBILITY.md](docs/ANDROID_COMPATIBILITY.md) — Android 7.1–16 support.
+- [docs/VERSIONING.md](docs/VERSIONING.md) — V/C/P versioning and versionCode mapping.
 
-- Unattended access on Android 11+ is limited by single-use MediaProjection
-  intents (documented in `docs/ANDROID_COMPATIBILITY.md`).
-- Secure screens (DRM, some banking apps) cannot be captured by MediaProjection.
-- Multi-touch and device audio are not implemented in V2C002.
-- Device wake requires a Firebase project (FCM); attended sessions work
-  without it.
+---
+
+## Roadmap
+
+- [x] Android remote-control foundation
+- [x] WebRTC transport + consent-first sessions
+- [x] STUN/TURN NAT traversal
+- [x] Connection health & TURN latency diagnostics
+- [x] Production APK pipeline (GitHub Actions)
+- [x] In-app update from GitHub Releases
+- [ ] Advanced device management
+- [ ] Deeper session diagnostics
+- [ ] Additional Android compatibility improvements
+
+---
+
+## Contributing
+
+Please open an issue before proposing major architectural changes. All
+meaningful changes should add an entry at the top of `CHANGELOG.md`. Production
+releases are generated through the GitHub Actions pipeline.
+
+---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[MIT](LICENSE) — see the [LICENSE](LICENSE) file.
+
+---
+
+[releases]: https://github.com/robprian/remot/releases
+[releases-latest]: https://github.com/robprian/remot/releases/latest
