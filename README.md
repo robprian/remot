@@ -66,9 +66,10 @@ cd android
 ./gradlew :app:assembleDebug
 ```
 
-Debug builds connect to `ws://10.0.2.2:8080` (emulator → host loopback). For
-two real devices, point `SIGNALING_URL` (in `app/build.gradle.kts`) at your
-machine's LAN IP or a deployed `wss://` URL.
+Debug builds connect to `ws://10.0.2.2:8080` (emulator → host loopback) by
+default. For two real devices, supply a `SIGNALING_URL` at build time (Gradle
+property or `SIGNALING_URL` env / GitHub secret) pointing at your deployed
+`wss://` signaling endpoint. See `docs/DEVELOPMENT.md`.
 
 ### 3. Pair and connect
 
@@ -85,25 +86,16 @@ device (requires pairing first). See `docs/ARCHITECTURE.md`.
 
 ---
 
-## Firewall ports (deployed server)
+## NAT traversal / TURN
 
-The production signaling server and coturn (STUN/TURN) run on the same host.
-TURN is served under the hostname `turn.robrion.net`. Open these ports in the
-cloud security group / firewall so Remot works across networks:
+Remot uses WebRTC with STUN/TURN for NAT traversal so that devices behind
+carrier CGNAT can still connect across the Internet. STUN enables direct P2P
+discovery; TURN relays encrypted media only when a direct P2P path isn't
+available. Time-limited TURN credentials are issued at runtime by the signaling
+server — the app never ships with a TURN secret embedded.
 
-| Port(s) | Protocol | Purpose | Needed for |
-| --- | --- | --- | --- |
-| `8080` | TCP | Signaling WebSocket (registration, pairing, session codes, handshake relay) | The app connecting to the server |
-| `3478` | UDP | STUN + TURN listener — `turn.robrion.net:3478` | NAT traversal / P2P discovery + relay |
-| `3478` | TCP | TURN over TCP (fallback when UDP is blocked) | Relay fallback |
-| `49152–65535` | UDP | TURN relay allocations (media relay) | Actual media relay when P2P fails |
-| `5349` | TCP | TURNS (TURN over TLS) | Only if TLS is configured (not yet deployed) |
-
-> **Note:** the signaling port `8080` is already reachable. UDP `3478` and the
-> relay range must be opened for TURN relay across the public Internet to work
-> (until then, sessions still connect over LAN or direct P2P where possible).
-> After opening them, re-verify with the trickle-ICE test described in
-> `infra/README.md`.
+See `infra/README.md` for deployment and verification details (opening the
+STUN/TURN listener and relay port range, plus a trickle-ICE test).
 
 ---
 

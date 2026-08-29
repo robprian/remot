@@ -12,6 +12,67 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C001 — 2026-08-29
+
+### Summary
+
+New V2 generation of the Remot production Android release under a fresh
+package identity and persistent production signing. Migrates the Android
+application ID to `com.robrion.remot`, signs the release APK with a stable,
+secrets-backed production keystore, points STUN/TURN at the configured
+production hostname (credentials still issued at runtime by the signaling
+server — none are embedded in the APK), and replaces the CI/CD pipeline with
+a strict build-then-release chain.
+
+### Changed
+
+- Android `applicationId` / `namespace` migrated `com.remot.app` →
+  `com.robrion.remot` (source tree, package declarations, imports, manifest
+  references). This is a new package identity; see
+  `docs/VERSIONING.md` for the migration note.
+- Release builds now produce a single universal signed APK
+  (`app-release.apk`), not split/unsigned artifacts.
+- `SIGNALING_URL` and all signing credentials are supplied at build time via
+  Gradle properties / environment / GitHub Secrets; no endpoints or secrets
+  are hardcoded in source.
+- TURN/STUN now served under the configured production hostname, with
+  credentials issued to clients at runtime by the signaling server
+  (`TURN_HOST`, `TURN_SECRET` remain server-side).
+
+### Added
+
+- Persistent production signing: a dedicated keystore supplied via GitHub
+  Secrets (`RELEASE_KEYSTORE_BASE64`, `RELEASE_KEYSTORE_PASSWORD`,
+  `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD`) so future releases can upgrade
+  previous installs without a signature mismatch.
+- `build.yml` — Build workflow (tests, lint, lint validation, signed release
+  build, APK identity/signature validation, artifact upload). Never releases.
+- `release.yml` — Release workflow, triggered only by a successful Build
+  (`workflow_run`), that downloads the exact artifact, re-validates it, and
+  creates the GitHub Release. No parallel build at release time; failed
+  builds never reach Release; one canonical release path; single global
+  release concurrency slot.
+
+### Security
+
+- No TURN secret, coturn `static-auth-secret`, or server credentials are
+  compiled into the APK; only the packaging identity and build-config
+  endpoints are present.
+- Release APK is signed with a persistent production key (never debug key,
+  never unsigned); release builds fail hard if signing credentials are absent.
+- README and public docs no longer expose the production TURN hostname,
+  ports, or any infrastructure IP addresses.
+
+### Fixed
+
+- Release APK previously could build unsigned or be published as a split/
+default artifact; it is now always a single installable, signed universal
+  APK validated by `apksigner` before release.
+- Build and Release previously shared/duplicated triggers; they are now
+  cleanly separated with Release strictly gated on Build success.
+
+---
+
 ## V1C001 — 2026-08-29
 
 ### Summary
@@ -42,7 +103,7 @@ two-workflow GitHub Actions pipeline.
   aspect-correct touch mapping added on the controller.
 - Android `SIGNALING_URL` (debug + release) now points at the production
   signaling broker (`ws://` until TLS is deployed); the broker issues
-  STUN/TURN ice servers against the public TURN hostname `turn.robrion.net`.
+  STUN/TURN ice servers against the configured production TURN hostname.
 - Signaling registration is now authenticated (server verifies
   `deviceId == SHA-256(pubKey)` + ECDSA signature over a fresh nonce).
 

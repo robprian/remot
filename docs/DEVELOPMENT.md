@@ -33,9 +33,11 @@ cd android
 ./gradlew :app:lintDebug              # lint
 ```
 
-The debug build connects to `ws://10.0.2.2:8080` (emulator → host loopback).
-For two real devices, override `SIGNALING_URL` in `app/build.gradle.kts` (debug
-build type) or set the release URL to your deployed `wss://` endpoint.
+The debug build connects to `ws://10.0.2.2:8080` (emulator → host loopback) by
+default. For two real devices (or a production build) supply a `SIGNALING_URL`
+at build time — as a Gradle property (`-PSIGNALING_URL=wss://...`),
+`SIGNALING_URL` env var, or a `SIGNALING_URL` GitHub secret (used by CI). The
+endpoint is not hardcoded in source.
 
 ### FCM wake (optional)
 
@@ -82,17 +84,33 @@ change is recorded at the top of `CHANGELOG.md`.
    git push origin v1c001
    ```
 
-The tag triggers the `release.yml` workflow, which builds the release APK,
-verifies its metadata against the tag, and creates a **GitHub Release**
-"Remot V1C001" with `remot-v1c001.apk` attached. CI (`ci.yml`) runs on
-pushes to main and pull requests only and never creates releases.
+Production releases use **two separated workflows**:
+
+- `build.yml` **Remot Build** — runs on pushes to main, PRs, and V/C/P tags.
+  It runs unit tests and lint, assembles the signed release APK, validates its
+  application ID, version, and signature, and uploads the exact APK as an
+  artifact (`remot-release-apk`). It never creates a release.
+- `release.yml` **Remot Release** — triggered **only** by a successful `Remot
+  Build` completion (`workflow_run` with `conclusion == success`). For V/C/P
+  tags it downloads the exact artifact, re-validates it, and creates the
+  GitHub Release. It never rebuilds. Non-tag builds and failed builds never
+  reach Release, so there is exactly one release path.
+
+The tag pushes the build (and thereby the gated release) for that exact
+commit. Concurrency prevents duplicate builds and only one release runs at a
+time.
 
 ### Signing
 
-Release signing uses environment secrets if configured (`KEYSTORE_B64`,
-`KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`). Without them the release APK
-is built unsigned — it must be signed before install. The debug APK is signed
-with the debug key and installable directly. Keystores are never committed.
+Release signing requires the persistent production keystore. Credentials are
+supplied at build time from Gradle properties or environment variables
+(`RELEASE_KEYSTORE_PATH`, `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`,
+`RELEASE_KEY_PASSWORD`), and via GitHub Secrets in CI
+(`RELEASE_KEYSTORE_BASE64`, `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`,
+`RELEASE_KEY_PASSWORD`). The release build **fails** if any signing value is
+missing — it never falls back to debug signing or emits an unsigned production
+APK. Keystores are never committed. The debug APK is signed with the debug key
+and installable directly.
 
 ## 5. GitHub Actions cost control
 

@@ -104,6 +104,7 @@ numeric value of the two-digit patch (P00 → 0).
 | V1C001P37     | 100137      |
 | V1C002P00     | 100200      |
 | V2C001P00     | 200100      |
+| V2C001P03     | 200103      |
 
 Never lower an already-published `versionCode`; the mapping above guarantees
 monotonic growth for increasing V/C/P values. Never derive `versionCode` from
@@ -134,6 +135,15 @@ V/C/P scheme was adopted:
 | `v1.0.0`     | GitHub Release v1.0.0  | Rebrand + hardening baseline (versionCode 1). |
 | `v1.0.1`     | GitHub Release v1.0.1  | CI/release workflow split + permissions. |
 | `v1c001`     | first V/C/P production | Continues the same codebase as `V1C001` (versionCode 100100). |
+
+## Package identity
+
+As of `V2C001` the Android application ID is `com.robrion.remot` (previously
+`com.remot.app`). Changing a package creates a new Android identity, so this is
+**not an in-place upgrade** from the old package — installs of `com.remot.app`
+must be uninstalled and re-installed fresh under `com.robrion.remot`. All
+future `com.robrion.remot` releases upgrade each other normally because they
+are signed with the same persistent production key.
 
 Legacy tags and releases are **historical and must not be deleted**. The
 `CHANGELOG.md` preserves them under `Legacy v1.0.0` / `Legacy v1.0.1` entries;
