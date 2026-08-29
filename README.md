@@ -87,21 +87,21 @@ device (requires pairing first). See `docs/ARCHITECTURE.md`.
 
 ## Firewall ports (deployed server)
 
-The production signaling server + coturn run on the same host (floating IP
-`43.156.82.52`). Open these ports in the cloud security group / firewall so
-Remot works across networks:
+The production signaling server and coturn (STUN/TURN) run on the same host.
+TURN is served under the hostname `turn.robrion.net`. Open these ports in the
+cloud security group / firewall so Remot works across networks:
 
 | Port(s) | Protocol | Purpose | Needed for |
 | --- | --- | --- | --- |
-| `8080` | TCP | Signaling WebSocket — `ws://43.156.82.52:8080` (registration, pairing, session codes, handshake relay) | The app connecting to the server |
-| `3478` | UDP | STUN + TURN (listener) | NAT traversal / P2P discovery + relay |
+| `8080` | TCP | Signaling WebSocket (registration, pairing, session codes, handshake relay) | The app connecting to the server |
+| `3478` | UDP | STUN + TURN listener — `turn.robrion.net:3478` | NAT traversal / P2P discovery + relay |
 | `3478` | TCP | TURN over TCP (fallback when UDP is blocked) | Relay fallback |
 | `49152–65535` | UDP | TURN relay allocations (media relay) | Actual media relay when P2P fails |
-| `5349` | TCP | TURNS (TURN over TLS) | Only if TLS + a domain are configured (not yet deployed) |
+| `5349` | TCP | TURNS (TURN over TLS) | Only if TLS is configured (not yet deployed) |
 
-> **Note:** TCP `8080` is already reachable. UDP `3478` and the relay range are
-> currently **filtered** — until they are opened, direct P2P and TURN relay
-> across the public Internet will not work (sessions still connect over LAN).
+> **Note:** the signaling port `8080` is already reachable. UDP `3478` and the
+> relay range must be opened for TURN relay across the public Internet to work
+> (until then, sessions still connect over LAN or direct P2P where possible).
 > After opening them, re-verify with the trickle-ICE test described in
 > `infra/README.md`.
 
@@ -160,8 +160,17 @@ screen** is the controlled one for that session.
 | `docs/SECURITY.md` | Security model, threats, mitigations |
 | `docs/ANDROID_COMPATIBILITY.md` | Android 7.1–16 support + platform limitations |
 | `docs/REMOTE_PROTOCOL.md` | Signaling + control protocol reference |
+| `docs/VERSIONING.md` | V/C/P production versioning + versionCode mapping |
 | `docs/DEVELOPMENT.md` | Build, test, release, CI workflow |
 | `infra/README.md` | Signaling + TURN deployment, firewall, TLS |
+
+## Production versioning
+
+Remot uses a three-level production version: `V{major}C{change}P{patch}`
+(e.g. `V1C001`, `V1C001P01`). The current version is **V1C001** (versionCode
+100100). Git tags are lowercase (`v1c001`), Android `versionName` matches the
+production identifier, and the release workflow triggers only on such tags.
+Full spec and the versionCode mapping: `docs/VERSIONING.md`.
 
 ## Security model (summary)
 
@@ -186,7 +195,7 @@ screen** is the controlled one for that session.
 - Unattended access on Android 11+ is limited by single-use MediaProjection
   intents (documented in `docs/ANDROID_COMPATIBILITY.md`).
 - Secure screens (DRM, some banking apps) cannot be captured by MediaProjection.
-- Multi-touch and device audio are not implemented in v1.0.0.
+- Multi-touch and device audio are not implemented in V1C001.
 - Device wake requires a Firebase project (FCM); attended sessions work
   without it.
 

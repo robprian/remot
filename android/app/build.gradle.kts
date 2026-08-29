@@ -13,11 +13,14 @@ android {
         applicationId = "com.remot.app"
         minSdk = 25
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        // V/C/P production versioning (see docs/VERSIONING.md):
+        // versionCode = V*100000 + C*100 + P  →  V1C001 = 100100
+        versionCode = 100100
+        versionName = "V1C001"
 
         // Point the app at your signaling server. Override per build type as needed.
-        buildConfigField("String", "SIGNALING_URL", "\"ws://10.0.2.2:8080\"")
+        // Production signaling endpoint (ws until TLS is configured; see infra/README.md).
+        buildConfigField("String", "SIGNALING_URL", "\"ws://43.156.82.52:8080\"")
     }
 
     buildFeatures {
@@ -48,13 +51,14 @@ android {
 
     buildTypes {
         debug {
-            // 10.0.2.2 = host loopback from the Android emulator
-            buildConfigField("String", "SIGNALING_URL", "\"ws://10.0.2.2:8080\"")
+            // Production signaling endpoint (emulator override: use ws://10.0.2.2:8080 for a local broker)
+            buildConfigField("String", "SIGNALING_URL", "\"ws://43.156.82.52:8080\"")
         }
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            buildConfigField("String", "SIGNALING_URL", "\"wss://signal.yourdomain.com\"")
+            // wss:// preferred once TLS + a signaling domain are configured
+            buildConfigField("String", "SIGNALING_URL", "\"ws://43.156.82.52:8080\"")
             val releaseSigning = signingConfigs.getByName("release")
             if (releaseSigning.storeFile != null) signingConfig = releaseSigning
         }
