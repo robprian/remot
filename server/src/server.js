@@ -214,6 +214,15 @@ async function handle(ws, m) {
       break;
     }
 
+    // ---- application-level heartbeat (only for registered sockets) ----
+    // The client starts app pings ONLY after a successful registration; an
+    // unauthenticated socket must not be answered (its client will not ping).
+    case 'ping': {
+      if (!ws.deviceId) return; // ignore — client should not ping before registering
+      send(ws, { type: 'pong', ts: m.ts || 0 });
+      break;
+    }
+
     // ---- host opens a code-based session ----
     case 'host-open': {
       if (!ws.deviceId) return send(ws, { type: 'error', reason: 'not-registered' });

@@ -49,6 +49,15 @@ class SignalingClient(
 
     @Volatile var isConnected = false; private set
 
+    /** True once the server accepted our signed registration (heartbeat may run). */
+    @Volatile var isRegistered = false; private set
+
+    /** True when the server permanently rejected our identity (no auto-reconnect). */
+    @Volatile var isAuthFailed = false; private set
+
+    /** Last measured signaling ping/pong round-trip (app-level heartbeat), ms. */
+    @Volatile var signalingLatencyMs: Long? = null; private set
+
     /** The endpoint this client is CURRENTLY using — surfaced in Diagnostics. */
     val signalingUrl: String get() = urls[urlIndex % urls.size]
 
@@ -89,18 +98,25 @@ class SignalingClient(
     private var ws: WebSocket? = null
     private var reconnectAttempt = 0
     private var closedByUser = false
-
-    /** Set when the server rejects our identity (permanent); stops the reconnect loop. */
-    @Volatile private var authFailed = false
     private val main = Handler(Looper.getMainLooper())
+
+    // App-level heartbeat: starts ONLY after registration succeeds, so an
+    // unauthenticated socket never pings. One timer per connection; cancelled
+    // on close / auth failure / reconnect.
+    private val heartbeat = Runnable { ping() }
+    private var heartbeatStarted = false
+    private var pendingPong: Runnable? = null
+    private var missedPongs = 0
+    private var pingSentAt = 0L
 
     fun connect() {
         closedByUser = false
-        authFailed = false
+        isAuthFailed = false
         SignalingDebugLog.record(currentUrl(), "CONNECTING")
         ws = client.newWebSocket(Request.Builder().url(currentUrl()).build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 isConnected = true
+                isRegistered = false
                 lastConnectError = null
                 reconnectAttempt = 0
                 SignalingDebugLog.record(signalingUrl, "CONNECTED")
@@ -124,12 +140,18 @@ class SignalingClient(
                     response != null && response.code > 0 -> "HTTP " + response.code
                     else -> "connection failed"
                 }
+                stopHeartbeat()
+                isConnected = false
+                isRegistered = false
                 lastConnectError = "$reason @ $signalingUrl"
                 SignalingDebugLog.record(signalingUrl, "FAILED", reason)
                 rotateEndpoint()
                 scheduleReconnect()
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                stopHeartbeat()
+                isConnected = false
+                isRegistered = false
                 if (lastConnectError == null) lastConnectError = reason.ifBlank { "closed ($code)" }
                 SignalingDebugLog.record(signalingUrl, "CLOSED", reason.ifBlank { "code $code" })
                 rotateEndpoint()
@@ -153,10 +175,11 @@ class SignalingClient(
 
     private fun scheduleReconnect() {
         isConnected = false
-        if (closedByUser || authFailed) return
+        isRegistered = false
+        if (closedByUser || isAuthFailed) return
         val delayMs = minOf(1000L * (1 shl reconnectAttempt.coerceAtMost(4)), 15_000L)
         reconnectAttempt++
-        main.postDelayed({ if (!closedByUser && !authFailed) connect() }, delayMs)
+        main.postDelayed({ if (!closedByUser && !isAuthFailed) connect() }, delayMs)
     }
 
     suspend fun reconnectAndAwait(timeoutMs: Long): Boolean = withTimeoutOrNull(timeoutMs) {
@@ -167,13 +190,28 @@ class SignalingClient(
 
     private fun handle(m: JSONObject) {
         when (m.getString("type")) {
-            "registered" -> listener.onRegistered(m.optJSONArray("iceServers") ?: JSONArray())
+            "registered" -> {
+                isRegistered = true
+                SignalingDebugLog.record(signalingUrl, "REGISTERED")
+                listener.onRegistered(m.optJSONArray("iceServers") ?: JSONArray())
+                startHeartbeat()
+            }
+            "pong" -> onPong()
             "register-failed" -> {
                 val reason = m.optString("reason", "unknown")
+                // Registration was rejected: the socket is dead. Close it ourselves
+                // (the server closes too) and NEVER keep heartbeat running on an
+                // unauthenticated connection.
+                stopHeartbeat()
                 isConnected = false
-                authFailed = true
+                isRegistered = false
+                isAuthFailed = true
+                lastConnectError = "registration rejected: $reason @ $signalingUrl"
                 SignalingDebugLog.record(signalingUrl, "REGISTER-FAILED", reason)
+                SignalingDebugLog.record(signalingUrl, "HEARTBEAT-STOP", "registration failed")
                 listener.onRegisterFailed(reason)
+                ws?.close(1000, "registration-rejected")
+                ws = null
             }
             "session-code" -> listener.onSessionCode(m.getString("code"))
             "join-request" -> listener.onJoinRequest(
@@ -216,8 +254,77 @@ class SignalingClient(
 
     fun sendAuthChallenge(to: String, nonceB64: String) =
         send(JSONObject().put("type", "auth-challenge").put("to", to).put("nonce", nonceB64))
-    fun sendAuthResponse(to: String, sigB64: String) =
-        send(JSONObject().put("type", "auth-response").put("to", to).put("sig", sigB64))
+
+    /**
+     * Answer the server's registration (or peer-relayed) auth challenge. The
+     * server REQUIRES the challenge `nonce` to be echoed verbatim — a
+     * registration `auth-response` without it is rejected with `auth-failed`
+     * (the root cause of "Signaling unreachable / auth-failed" on device).
+     */
+    fun sendAuthResponse(to: String, nonceB64: String, sigB64: String) {
+        val o = JSONObject()
+            .put("type", "auth-response")
+            .put("nonce", nonceB64)
+            .put("sig", sigB64)
+        if (to.isNotBlank()) o.put("to", to) // blank = server-direct registration
+        send(o)
+    }
+
+    // ---- app-level heartbeat (runs ONLY after registration) ----
+
+    private fun startHeartbeat() {
+        if (heartbeatStarted) return
+        heartbeatStarted = true
+        missedPongs = 0
+        signalingLatencyMs = null
+        SignalingDebugLog.record(signalingUrl, "HEARTBEAT-START")
+        main.postDelayed(heartbeat, 15_000)
+    }
+
+    private fun stopHeartbeat() {
+        heartbeatStarted = false
+        main.removeCallbacks(heartbeat)
+        pendingPong?.let { main.removeCallbacks(it) }
+        pendingPong = null
+        missedPongs = 0
+        pingSentAt = 0L
+    }
+
+    private fun ping() {
+        if (!heartbeatStarted || !isConnected || !isRegistered) return
+        pingSentAt = System.currentTimeMillis()
+        send(JSONObject().put("type", "ping").put("ts", pingSentAt))
+        val timeout = Runnable {
+            missedPongs++
+            pendingPong = null
+            if (missedPongs >= 3) {
+                // Connection is alive at TCP level but the server is not answering
+                // application pings — treat as dead and reconnect.
+                SignalingDebugLog.record(signalingUrl, "HEARTBEAT-FAILED", "$missedPongs missed pongs")
+                lastConnectError = "heartbeat timeout ($missedPongs missed pongs) @ $signalingUrl"
+                ws?.cancel()
+                ws = null
+            }
+        }
+        pendingPong = timeout
+        main.postDelayed(timeout, 10_000)
+        main.postDelayed(heartbeat, 15_000)
+    }
+
+    private fun onPong() {
+        pendingPong?.let { main.removeCallbacks(it) }
+        pendingPong = null
+        missedPongs = 0
+        if (pingSentAt > 0) signalingLatencyMs = System.currentTimeMillis() - pingSentAt
+        pingSentAt = 0L
+    }
+
+    fun clearRegistrationState() {
+        stopHeartbeat()
+        isConnected = false
+        isRegistered = false
+        isAuthFailed = false
+    }
 }
 
 /** Returns the string field, or null when absent/JSON-null (avoids optString(name, null)). */

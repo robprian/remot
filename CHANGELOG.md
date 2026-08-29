@@ -12,6 +12,55 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C004P05 — 2026-08-30
+
+### Summary
+
+Fixes the signaling **registration authentication** — the app's
+`auth-response` never echoed the challenge `nonce` the server requires, so
+EVERY registration attempt was rejected with `auth-failed`, leaving the app
+stuck at “Signaling unreachable” with STUN/TURN unknown (no credentials are
+issued until registration succeeds). Also fixes the state machine so an
+unauthenticated socket never runs a heartbeat, and adds an app-level
+ping/pong heartbeat with real measured signaling latency.
+
+### Fixed
+
+- **Signaling `auth-failed` (root cause):** the Android client sent
+  `auth-response` without the challenge `nonce`. The server verifies
+  `nonce === challenge nonce` before checking the signature, so every
+  registration was rejected. `sendAuthResponse` now echoes the nonce verbatim
+  (and omits `to` for server-direct registration). Verified against the
+  server contract with a new smoke test: a valid signature but missing nonce
+  is rejected exactly as the app was failing.
+- **Heartbeat ran before/without registration:** the client kept OkHttp's
+  20 s keepalive pinging a socket whose registration had failed, producing the
+  observed `sent ping but didn't receive pong within 20000ms` 43 s later. The
+  client now closes the socket immediately on `register-failed`, sets an
+  explicit `isAuthFailed` state, and stops all heartbeat timers.
+- **Registration state machine:** added `isRegistered` / `isAuthFailed`
+  states to `SignalingClient`; `register-failed` now marks auth failure
+  (no auto-reconnect), records `HEARTBEAT-STOP`, and surfaces the reason in
+  Diagnostics (`registration rejected: …`).
+
+### Added
+
+- **App-level heartbeat (RFC-free JSON ping/pong)** that starts ONLY after
+  `registered` and measures a real signaling round-trip (`signalingLatencyMs`,
+  15 s interval, 10 s pong timeout, reconnect after 3 missed pongs). The
+  server answers `ping` only for registered sockets.
+- **Signaling ping + Registration rows in Diagnostics and the home
+  Connection-health card** — “Connection” (socket) is now shown separately
+  from “Registration” (Authenticated / Auth Failed / Pending), and signaling
+  ping latency is distinct from TURN latency.
+- Server smoke tests: `auth-response` without the echoed nonce is rejected;
+  registered sockets get `pong`; unregistered sockets' pings are ignored.
+
+### Changed
+
+- Bumped production version to **V2C004P05** (versionCode 200405).
+
+---
 ## V2C004P04 — 2026-08-29
 
 ### Summary
@@ -710,3 +759,4 @@ the full documentation and release pipeline.
 - Android: `SignalingClient` presents `DeviceIdentity.publicKeyB64()` on
   register and stops auto-reconnecting after a permanent registration rejection.
 - Input: `long-press` maps to a 600 ms gesture stroke on the host.
+

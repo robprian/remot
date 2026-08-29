@@ -98,9 +98,11 @@ object ServiceLocator : SignalingClient.Listener {
         }
     }
     override fun onAuthChallenge(from: String, nonceB64: String) {
-        // Prove our identity over the challenge nonce.
+        // Prove our identity over the challenge nonce. The nonce MUST be echoed
+        // verbatim in the auth-response or the server rejects registration with
+        // `auth-failed` (server requires m.nonce === challenge nonce).
         val sig = DeviceIdentity.sign(com.robrion.remot.crypto.Crypto.unb64(nonceB64))
-        signaling.sendAuthResponse(from, com.robrion.remot.crypto.Crypto.b64(sig))
+        signaling.sendAuthResponse(from, nonceB64, com.robrion.remot.crypto.Crypto.b64(sig))
     }
     override fun onAuthResponse(from: String, sigB64: String) {
         // Host-side verification is handled by whoever issued the challenge

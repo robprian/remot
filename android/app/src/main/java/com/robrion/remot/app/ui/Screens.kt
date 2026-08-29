@@ -49,6 +49,7 @@ import com.robrion.remot.services.ServiceStatus
 import com.robrion.remot.ui.components.NetworkHealthCard
 import com.robrion.remot.ui.components.ServiceCard
 import com.robrion.remot.ui.components.SectionHeading
+import com.robrion.remot.ui.components.StatusDot
 import com.robrion.remot.ui.components.StatusIndicator
 import com.robrion.remot.ui.components.StatusTone
 import com.robrion.remot.ui.components.statusColor
@@ -366,13 +367,39 @@ private fun DiagnosticsCard(vm: MainViewModel) {
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             StatusIndicator("Internet", h.internet)
+            // Connection (WS up) is shown separately from Registration (identity
+            // authenticated) — a connected-but-unregistered socket is NOT ready.
             StatusIndicator("Signaling", h.signaling)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val regTone = when {
+                    h.signalingAuthFailed -> StatusTone.ERROR
+                    h.signalingRegistered -> StatusTone.SUCCESS
+                    h.signaling == EndpointState.OFFLINE -> StatusTone.NEUTRAL
+                    else -> StatusTone.NEUTRAL
+                }
+                val regText = when {
+                    h.signalingAuthFailed -> "Auth Failed"
+                    h.signalingRegistered -> "Authenticated"
+                    h.signaling == EndpointState.ONLINE -> "Pending…"
+                    else -> "—"
+                }
+                StatusDot(statusColor(regTone))
+                Spacer(Modifier.width(8.dp))
+                Text("Registration", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Text(regText, style = MaterialTheme.typography.labelMedium, color = statusColor(regTone))
+            }
             h.signalingUrl?.let {
                 Row {
                     Text("Signaling endpoint", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                     Text(it, style = MaterialTheme.typography.bodySmall,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            h.signalingLatencyMs?.let { ms ->
+                Row {
+                    Text("Signaling ping", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text("$ms ms", style = MaterialTheme.typography.labelLarge)
                 }
             }
             h.signalingError?.let {
@@ -397,7 +424,7 @@ private fun DiagnosticsCard(vm: MainViewModel) {
             }
             h.latencyMs?.let {
                 Row {
-                    Text("Latency", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text("TURN latency", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                     Text("$it ms", style = MaterialTheme.typography.labelLarge)
                 }
             }

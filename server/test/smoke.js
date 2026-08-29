@@ -134,6 +134,20 @@ function check(name, cond) {
     check('auth-response with wrong nonce rejected', fail.reason === 'auth-failed');
     noSig.close();
   }
+  {
+    // The registration auth-response MUST echo the challenge nonce — a response
+    // with a VALID signature but NO nonce field is rejected (the exact bug that
+    // made the Android client always fail registration with auth-failed).
+    const noNonce = await openRaw();
+    const failP = next(noNonce, 'register-failed');
+    send(noNonce, { type: 'register', deviceId: HOST_DEV.deviceId, pubKeyB64: HOST_DEV.pubB64 });
+    const chal = await next(noNonce, 'auth-challenge');
+    const sig = signNonce(HOST_DEV.privateKey, chal.nonce);
+    send(noNonce, { type: 'auth-response', sig }); // no nonce echoed
+    const fail = await failP;
+    check('auth-response WITHOUT echoed nonce rejected', fail.reason === 'auth-failed');
+    noNonce.close();
+  }
 
   // --- health endpoint ---
   {
@@ -227,6 +241,23 @@ function check(name, cond) {
     for (let i = 0; i < 11; i++) send(ctrl.ws, { type: 'join', hostId: 'ghost-host-000' });
     const msgs = await got;
     check('rate limit rejects excess joins', msgs.some((m) => m.type === 'join-failed' && m.reason === 'rate-limited'));
+  }
+
+  // --- app-level heartbeat: ping only answered for REGISTERED sockets ---
+  {
+    const pongP = next(host.ws, 'pong');
+    send(host.ws, { type: 'ping', ts: 12345 });
+    const pong = await pongP;
+    check('registered socket receives pong', pong.type === 'pong' && pong.ts === 12345);
+  }
+  {
+    // An unauthenticated socket must NOT get its application ping answered
+    // (the client is not supposed to ping before registering anyway).
+    const raw = await openRaw();
+    const timeout = new Promise((r) => setTimeout(() => r('timeout'), 300));
+    const resp = await Promise.race([next(raw, 'pong'), timeout]);
+    check('unregistered socket ping NOT answered', resp === 'timeout');
+    raw.close();
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

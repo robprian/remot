@@ -22,6 +22,12 @@ data class NetworkHealth(
     val signaling: EndpointState = EndpointState.UNKNOWN,
     val signalingUrl: String? = null,
     val signalingError: String? = null,
+    /** True when the server accepted our signed registration (distinct from TCP/WS connect). */
+    val signalingRegistered: Boolean = false,
+    /** True when the server permanently rejected registration (auth failure). */
+    val signalingAuthFailed: Boolean = false,
+    /** App-level signaling ping/pong latency, ms (real measured round-trip). */
+    val signalingLatencyMs: Long? = null,
     val stun: EndpointState = EndpointState.UNKNOWN,
     val turn: EndpointState = EndpointState.UNKNOWN,
     val turnHost: String? = null,
@@ -104,13 +110,20 @@ class NetworkHealthRepository(
         val now = System.currentTimeMillis()
 
         val internet = checkInternet()
-        val signaling = if (ServiceLocator.signaling.isConnected) EndpointState.ONLINE
-        else EndpointState.OFFLINE
+        val sig = ServiceLocator.signaling
+        // "Signaling" is ONLINE only when the socket is connected AND the server
+        // accepted our signed registration — a raw WebSocket connect without
+        // registration is NOT a working signaling link (honest UI state).
+        val signaling = when {
+            sig.isConnected && sig.isRegistered -> EndpointState.ONLINE
+            sig.isConnected -> EndpointState.CHECKING
+            else -> EndpointState.OFFLINE
+        }
 
         // Developer-facing signaling diagnostic data (URL + why it's failing).
-        val signalingUrl = ServiceLocator.signaling.signalingUrl
+        val signalingUrl = sig.signalingUrl
         val signalingError = if (signaling == EndpointState.ONLINE) null
-        else ServiceLocator.signaling.lastConnectError
+        else sig.lastConnectError
 
         // Derive the TURN/STUN endpoint + credentials from the ice servers the
         // signaling server actually issued (never hardcoded, never fake).
@@ -138,6 +151,9 @@ class NetworkHealthRepository(
             signaling = signaling,
             signalingUrl = signalingUrl,
             signalingError = signalingError,
+            signalingRegistered = sig.isRegistered,
+            signalingAuthFailed = sig.isAuthFailed,
+            signalingLatencyMs = sig.signalingLatencyMs,
             stun = stun,
             turn = turn,
             turnHost = turnEndpoint?.host,

@@ -136,14 +136,40 @@ fun NetworkHealthCard(
             Spacer(Modifier.height(4.dp))
             StatusIndicator("Internet", health.internet)
             StatusIndicator("Signaling", health.signaling)
+            // Registration is distinct from the socket connect: a connected-but-
+            // unauthenticated signaling link is NOT ready for sessions.
+            if (health.signalingRegistered || health.signalingAuthFailed) {
+                val (tone, text) = when {
+                    health.signalingAuthFailed -> StatusTone.ERROR to "Auth Failed"
+                    else -> StatusTone.SUCCESS to "Authenticated"
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    StatusDot(statusColor(tone))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Registration", style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f))
+                    Text(text, style = MaterialTheme.typography.labelMedium, color = statusColor(tone))
+                }
+            }
             StatusIndicator("STUN", health.stun)
             StatusIndicator("TURN", health.turn)
 
-            // Measured latency — a real STUN/TURN round-trip, never a guess.
+            // Signaling ping (app-level heartbeat round-trip, ms) — shown
+            // separately from the TURN latency below; they measure different paths.
+            health.signalingLatencyMs?.let { ms ->
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Signaling ping", style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f))
+                    Text("${ms} ms", style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold, color = latencyQualityColor(ms))
+                }
+            }
+            // Measured TURN latency — a real STUN/TURN round-trip, never a guess.
             health.latencyMs?.let { ms ->
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Latency", style = MaterialTheme.typography.bodyMedium,
+                    Text("TURN latency", style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f))
                     Text(
                         "${ms} ms",
