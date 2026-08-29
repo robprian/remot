@@ -20,6 +20,9 @@
 
     <!-- QR scanning (controller joins by scanning the host's code) -->
     <uses-permission android:name="android.permission.CAMERA"/>
+
+    <!-- In-app update: installing the downloaded release APK (Android 8+) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <uses-feature android:name="android.hardware.camera.any" android:required="false"/>
 
     <!-- Optional: include only if you actually stream device audio -->
@@ -105,6 +108,17 @@
                 <action android:name="com.google.firebase.MESSAGING_EVENT"/>
             </intent-filter>
         </service>
+
+        <!-- In-app update: serve the downloaded APK to the package installer -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"/>
+        </provider>
 
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"

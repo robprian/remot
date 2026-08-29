@@ -13,10 +13,15 @@ import com.robrion.remot.services.ServiceState
 import com.robrion.remot.services.ServiceStatus
 import com.robrion.remot.session.SessionCodes
 import com.robrion.remot.trust.PeerIdentity
+import com.robrion.remot.update.ApkInstaller
+import com.robrion.remot.update.UpdateChecker
+import com.robrion.remot.update.UpdateInfoState
 import com.robrion.remot.webrtc.LinkState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
 import org.json.JSONObject
 import org.webrtc.EglBase
 import org.webrtc.VideoTrack
@@ -25,6 +30,9 @@ import org.webrtc.VideoTrack
 enum class Screen { HOME, HOST_CODE, JOIN, SCAN, PAIRED, SAFETY_NUMBER, SESSION, SERVICES }
 
 private const val JOIN_TIMEOUT_MS = 45_000L
+
+/** In-app update check throttle (ms) — keep GitHub API usage gentle. */
+private const val UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000L
 
 /**
  * UI state + intent handling. Bridges Compose to ServiceLocator; keeps only
@@ -63,6 +71,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- active session ICE route ("host"/"srflx"/"relay"/null) ----
     var iceRoute by mutableStateOf<String?>(null); private set
+
+    // ---- in-app update (GitHub release) ----
+    var updateState by mutableStateOf<UpdateInfoState?>(null); private set
+    private var updateDismissed = false
+    private var lastUpdateCheckMs = 0L
+    private val updateHttp by lazy { OkHttpClient() }
 
     val eglBase: EglBase get() = ServiceLocator.core.eglBase
 
@@ -117,6 +131,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         refreshServiceStates()
         ServiceLocator.networkHealth.start()
         ServiceLocator.networkHealth.refreshNow()
+        checkForUpdateIfStale()
     }
 
     /** Call from onPause: stop polling (never hammer the network in background). */
@@ -228,6 +243,53 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             put("myPub", ServiceLocator.deviceId)
             put("peerPub", peer.peerId)
         })
+    }
+
+    // ---- in-app update flow ----
+    /** Auto check on foreground; throttled and skipped once dismissed this launch. */
+    fun checkForUpdateIfStale() {
+        if (updateDismissed || updateState != null) return
+        val now = System.currentTimeMillis()
+        if (now - lastUpdateCheckMs < UPDATE_CHECK_INTERVAL_MS) return
+        lastUpdateCheckMs = now
+        checkForUpdate()
+    }
+
+    private fun checkForUpdate() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val latest = runCatching { UpdateChecker(updateHttp).fetchLatest() }.getOrNull() ?: return@launch
+            if (latest.versionCode > BuildConfig.VERSION_CODE) {
+                if (!updateDismissed && updateState == null) {
+                    updateState = UpdateInfoState.Available(latest)
+                }
+            }
+        }
+    }
+
+    /** Download the release APK, then hand it to the system installer. */
+    fun downloadAndInstallUpdate() {
+        val release = (updateState as? UpdateInfoState.Available)?.release ?: return
+        updateState = UpdateInfoState.Downloading(release, 0)
+        viewModelScope.launch(Dispatchers.IO) {
+            val app = getApplication()
+            try {
+                val file = ApkInstaller.targetFile(app, release.apkName)
+                ApkInstaller.download(app, updateHttp, release.apkUrl, file) { pct ->
+                    updateState = UpdateInfoState.Downloading(release, pct)
+                }
+                val launched = ApkInstaller.launchInstall(app, file)
+                updateState = if (launched) UpdateInfoState.InstallStarted(release)
+                else UpdateInfoState.Error(release, "Installing from Remot needs permission. Allow it in the next screen, then try again.")
+            } catch (e: Exception) {
+                updateState = UpdateInfoState.Error(release, e.message?.let { "Update failed: $it" } ?: "Update failed")
+            }
+        }
+    }
+
+    /** User dismissed the dialog; don't nag again this launch. */
+    fun dismissUpdate() {
+        updateDismissed = true
+        updateState = null
     }
 
     // ---- controller sends input ----

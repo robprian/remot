@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- APK downloaded for in-app updates lives in getExternalFilesDir("updates") -->
+    <external-files-path name="updates" path="updates/"/>
+    <!-- Fallback when external storage is not available -->
+    <cache-path name="updates_cache" path="updates/"/>
+</paths>

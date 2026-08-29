@@ -12,6 +12,40 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C003 — 2026-08-29
+
+### Summary
+
+Adds an **in-app auto-update** flow: on launch the app checks the latest
+published Remot GitHub release, and if it is a newer V/C/P version than the
+installed build, shows a dialog offering to download and install the new APK
+from the GitHub release. Download happens in-app (with progress) and the APK
+is handed to the system package installer — installation always stays an
+explicit platform-gated user action.
+
+### Added
+
+- `UpdateChecker` — queries `repos/robprian/remot/releases/latest`, derives the
+  release `versionCode` from its V/C/P tag on the same formula as the APK
+  (`V*100000 + C*100 + P`), and returns the APK asset URL. Never prompts on a
+  transient GitHub/network failure.
+- `ApkInstaller` — streams the APK into app-private storage (OkHttp) with
+  progress, then launches the system installer via a new FileProvider
+  (`com.robrion.remot.fileprovider`, `@xml/file_paths`). Falls back to guiding
+  the user to allow installs from this source when needed.
+- `REQUEST_INSTALL_PACKAGES` permission + FileProvider wiring in the manifest.
+- Non-blocking Compose update dialog (available / downloading / install-started
+  / error) surfaced at the app root, checked on foreground and throttled to
+  avoid hammering the GitHub API.
+
+### Versioning
+
+- Bumped production version to **V2C003** (`versionName`), `versionCode`
+  **200300** — higher than the shipped V2C002 (200200) so the update check
+  reads it as current once installed.
+
+---
+
 ## V2C002 — 2026-08-29
 
 ### Summary

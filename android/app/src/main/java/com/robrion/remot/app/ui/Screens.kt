@@ -11,6 +11,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Keyboard
@@ -49,6 +50,7 @@ import com.robrion.remot.ui.components.SectionHeading
 import com.robrion.remot.ui.components.StatusIndicator
 import com.robrion.remot.ui.components.StatusTone
 import com.robrion.remot.ui.components.statusColor
+import com.robrion.remot.update.UpdateInfoState
 import com.robrion.remot.webrtc.LinkState
 import android.os.Build
 
@@ -91,6 +93,11 @@ fun AppRoot(
                 Screen.SERVICES -> ServicesScreen(vm, onOpenAccessibilitySettings, onOpenNotificationSettings)
             }
         }
+    }
+
+    // In-app update overlay — non-blocking, only when a newer release exists.
+    vm.updateState?.let { state ->
+        RemotUpdateDialog(state = state, onDismiss = { vm.dismissUpdate() }, onUpdate = { vm.downloadAndInstallUpdate() })
     }
 
     // Consent overlay (host side) — the compliance-critical gate.
@@ -681,4 +688,71 @@ private fun ConsentDialog(
         confirmButton = { Button(onClick = onAllow) { Text("Allow") } },
         dismissButton = { TextButton(onClick = onDeny) { Text("Deny") } }
     )
+}
+
+// ---------------------------------------------------------------------------
+// IN-APP UPDATE
+// ---------------------------------------------------------------------------
+
+/** Non-blocking update prompt shown when a newer GitHub release exists. */
+@Composable
+private fun RemotUpdateDialog(
+    state: UpdateInfoState,
+    onDismiss: () -> Unit,
+    onUpdate: () -> Unit,
+) {
+    when (state) {
+        is UpdateInfoState.Available -> AlertDialog(
+            onDismissRequest = onDismiss,
+            icon = { Icon(Icons.Default.Download, contentDescription = null) },
+            title = { Text("Update available") },
+            text = {
+                Text(
+                    "Remot ${state.release.versionName} is available — you're on ${BuildConfig.VERSION_NAME}. " +
+                        "Download the latest APK from GitHub and install it."
+                )
+            },
+            confirmButton = { Button(onClick = onUpdate) { Text("Download & Update") } },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("Later") } }
+        )
+
+        is UpdateInfoState.Downloading -> AlertDialog(
+            onDismissRequest = {},
+            icon = { Icon(Icons.Default.Download, contentDescription = null) },
+            title = { Text("Downloading update…") },
+            text = {
+                Column {
+                    Text("Remot ${state.release.versionName}", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(12.dp))
+                    LinearProgressIndicator(
+                        progress = { state.progress / 100f },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text("${state.progress}%", style = MaterialTheme.typography.labelMedium)
+                }
+            },
+            confirmButton = {}
+        )
+
+        is UpdateInfoState.InstallStarted -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Update ready") },
+            text = {
+                Text(
+                    "The APK is downloaded. Follow the system prompt to install " +
+                        "Remot ${state.release.versionName}. You can return to the app afterwards."
+                )
+            },
+            confirmButton = { Button(onClick = onDismiss) { Text("OK") } }
+        )
+
+        is UpdateInfoState.Error -> AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Update failed") },
+            text = { Text(state.message) },
+            confirmButton = { Button(onClick = onUpdate) { Text("Retry") } },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("Later") } }
+        )
+    }
 }
