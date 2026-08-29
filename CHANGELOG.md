@@ -137,6 +137,25 @@ explicit platform-gated user action.
   now shows a tappable **`@robprian ↗`** link that opens
   `https://github.com/robprian/remot`.
 
+#### Signaling end-to-end verified locally
+- The signaling server runs **locally** (`server/`, `node src/server.js`,
+  `/healthz` → `200 ok`) and its full smoke suite passes (`20 passed, 0
+  failed`): signed registration, auth challenge, iceServers issuance, pairing,
+  join/consent, offer/answer/ice relay, invalid-code and rate limiting.
+- A raw WebSocket probe confirms the **production signaling endpoint answers**
+  (`ws://turn.robrion.net:8080` → `[OK] open in ~21ms`) and the direct-IP
+  route works too (`ws://43.156.82.52:8080` → `[OK] open in ~10ms`). The
+  server is not dropping ws connections.
+- **Fallback endpoints added:** `SignalingClient` now accepts an ordered list of
+  candidate URLs and rotates through them on connect failure. `ServiceLocator`
+  builds: primary `SIGNALING_URL`, a `wss://` variant of the same host:port,
+  a `ws://` direct endpoint to `BuildConfig.SERVER_IP`, and a `wss://` variant
+  to that IP (when configured). If the primary is unreachable — e.g. a
+  hostname resolving to unroutable IPv6 first, or a network blocking cleartext
+  `ws://` — the client automatically retries over the alternate routes.
+  Diagnostics now appends the endpoint being used and notes that alternate
+  endpoints are retried automatically.
+
 ### Versioning
 
 - Bumped production version to **V2C003** (`versionName`), `versionCode`

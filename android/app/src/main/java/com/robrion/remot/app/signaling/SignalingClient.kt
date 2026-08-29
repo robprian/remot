@@ -22,7 +22,7 @@ import java.net.InetAddress
  * decoded messages to a [Listener]. All send helpers are fire-and-forget JSON.
  */
 class SignalingClient(
-    private val url: String,
+    private val urls: List<String>,
     private val deviceId: String,
     private val listener: Listener,
 ) {
@@ -49,8 +49,13 @@ class SignalingClient(
 
     @Volatile var isConnected = false; private set
 
-    /** The endpoint this client was built with — surfaced in Diagnostics. */
-    val signalingUrl: String get() = url
+    /** The endpoint this client is CURRENTLY using — surfaced in Diagnostics. */
+    val signalingUrl: String get() = urls[urlIndex % urls.size]
+
+    /** True when the active connection is using a fallback endpoint (not the first). */
+    val usingFallbackUrl: Boolean get() = (urlIndex % urls.size) != 0
+
+    private var urlIndex = 0
 
     /** Last connection failure reason (cleared on a successful connect). */
     @Volatile var lastConnectError: String? = null; private set
@@ -92,11 +97,12 @@ class SignalingClient(
     fun connect() {
         closedByUser = false
         authFailed = false
-        ws = client.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
+        ws = client.newWebSocket(Request.Builder().url(currentUrl()).build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 isConnected = true
                 lastConnectError = null
                 reconnectAttempt = 0
+                onReconnected?.invoke()
                 // Present the public key; the server verifies deviceId == sha256(pub),
                 // challenges us with a nonce (see onAuthChallenge), and only then
                 // marks this socket registered.
@@ -106,25 +112,31 @@ class SignalingClient(
                         .put("deviceId", deviceId)
                         .put("pubKeyB64", DeviceIdentity.publicKeyB64())
                 )
-                onReconnected?.invoke()
             }
             override fun onMessage(webSocket: WebSocket, text: String) = handle(JSONObject(text))
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 // Surface WHY we can't reach signaling (e.g. cleartext-blocked,
                 // DNS, TLS, or the server is down) so it's visible in Diagnostics.
-                lastConnectError = t.message
-                    ?: response?.code?.let { "HTTP $it" }
-                    ?: "connection failed"
+                lastConnectError = (t.message ?: response?.code?.let { "HTTP $it" } ?: "connection failed")
+                        + " @ ${signalingUrl}"
+                rotateEndpoint()
                 scheduleReconnect()
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 if (lastConnectError == null) lastConnectError = reason.ifBlank { "closed ($code)" }
+                rotateEndpoint()
                 scheduleReconnect()
             }
         })
     }
 
-    fun close() {
+    private fun rotateEndpoint() {
+        if (urls.size > 1) urlIndex = (urlIndex + 1) % urls.size
+    }
+
+    private fun currentUrl(): String = urls[urlIndex % urls.size]
+
+    private fun close() {
         closedByUser = true
         isConnected = false
         ws?.close(1000, "bye")

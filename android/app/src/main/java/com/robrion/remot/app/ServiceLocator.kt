@@ -3,6 +3,7 @@ package com.robrion.remot
 import android.content.Context
 import com.robrion.remot.identity.DeviceIdentity
 import com.robrion.remot.network.NetworkHealthRepository
+import java.net.URI
 import com.robrion.remot.session.SessionManager
 import com.robrion.remot.signaling.SignalingClient
 import com.robrion.remot.trust.PairingManager
@@ -51,7 +52,7 @@ object ServiceLocator : SignalingClient.Listener {
         core = WebRtcCore(appContext)
         trust = TrustStore.create(appContext)
         grants = GrantStore.create(appContext)
-        signaling = SignalingClient(signalingUrl, deviceId, this)
+        signaling = SignalingClient(signalingUrlCandidates(signalingUrl), deviceId, this)
         session = SessionManager(appContext, core, signaling, trust, scope)
         pairing = PairingManager(signaling, trust)
         networkHealth = NetworkHealthRepository(appContext, scope)
@@ -104,5 +105,38 @@ object ServiceLocator : SignalingClient.Listener {
     override fun onAuthResponse(from: String, sigB64: String) {
         // Host-side verification is handled by whoever issued the challenge
         // (see UnattendedHostService / consent flow). No-op at the locator level.
+    }
+
+    /**
+     * Builds the ordered list of signaling endpoints the client tries in turn.
+     *
+     * The primary URL is the compiled SIGNALING_URL. If it cannot connect (e.g.
+     * a hostname that resolves to unroutable IPv6 first, or a cleartext-blocked
+     * network), the client falls back to:
+     *   1. a wss:// variant of the same host:port (if the primary was ws://),
+     *   2. a ws:// direct endpoint to BuildConfig.SERVER_IP (when configured),
+     *   3. a wss:// direct endpoint to that IP.
+     * This keeps signaling reachable when a partial route (IPv6, carrier NAT)
+     * blocks the primary path, without hardcoding any address in source.
+     */
+    private fun signalingUrlCandidates(primary: String): List<String> {
+        val out = LinkedHashSet<String>()
+        out.add(primary)
+        try {
+            val u = URI(primary)
+            val host = u.host ?: return out.toList()
+            val port = if (u.port in 1..65535) u.port else if (u.scheme == "wss") 443 else 80
+            val path = u.rawPath?.takeIf { it.isNotBlank() } ?: ""
+
+            if (u.scheme == "ws") out.add("wss://$host:$port$path")
+            val ip = BuildConfig.SERVER_IP
+            if (ip.isNotBlank()) {
+                out.add("ws://$ip:$port$path")
+                if (u.scheme == "ws") out.add("wss://$ip:$port$path")
+            }
+        } catch (e: Exception) {
+            // fall back to only the primary
+        }
+        return out.toList()
     }
 }

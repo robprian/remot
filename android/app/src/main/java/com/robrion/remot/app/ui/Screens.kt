@@ -367,6 +367,9 @@ private fun DiagnosticsCard(vm: MainViewModel) {
             h.signalingError?.let {
                 Text("Reason: $it", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error)
+                Text("Remot retries alternate endpoints automatically when the primary is unreachable.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             StatusIndicator("STUN", h.stun)
             StatusIndicator("TURN", h.turn)
