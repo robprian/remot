@@ -117,8 +117,12 @@ class SignalingClient(
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 // Surface WHY we can't reach signaling (e.g. cleartext-blocked,
                 // DNS, TLS, or the server is down) so it's visible in Diagnostics.
-                lastConnectError = (t.message ?: response?.code?.let { "HTTP $it" } ?: "connection failed")
-                        + " @ ${signalingUrl}"
+                val reason = when {
+                    !t.message.isNullOrBlank() -> t.message
+                    response != null && response.code > 0 -> "HTTP " + response.code
+                    else -> "connection failed"
+                }
+                lastConnectError = "$reason @ $signalingUrl"
                 rotateEndpoint()
                 scheduleReconnect()
             }
