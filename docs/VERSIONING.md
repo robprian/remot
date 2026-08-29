@@ -65,8 +65,36 @@ Use P for:
 * **P** — minor patches.
 
 When uncertain, prefer the smallest increment that accurately describes the
-production impact. Do not inflate versions. Versions represent **production
-states**, not commits — do not bump the version for every commit.
+production impact. Do not inflate versions.
+
+## Every release MUST raise versionCode (auto-update rule)
+
+The in-app auto-update compares the installed APK's `versionCode` against the
+latest published release's `versionCode` (`V*100000 + C*100 + P`). Therefore
+**every release — including every small patch — MUST carry a higher
+versionCode than the last published release.** In practice:
+
+* A small patch on the current cycle bumps **P**: `V2C004` → `V2C004P01` →
+  `V2C004P02` (versionCode 200400 → 200401 → 200402).
+* A substantial change bumps **C** and resets P: `V2C004P99` → `V2C005`.
+* A new generation bumps **V** and resets C/P: `V2C999P99` → `V3C001`.
+
+Never re-release the same versionCode twice — devices on that version would
+never see the update prompt. If you are about to push an APK whose version
+has not changed since the last release, bump it first.
+
+Use `scripts/bump-version.sh` for this:
+
+```bash
+./scripts/bump-version.sh             # small patch  -> next P (default)
+./scripts/bump-version.sh --change    # change cycle -> next C, P reset
+./scripts/bump-version.sh --dry-run   # preview only
+```
+
+It updates `android/app/build.gradle.kts` (versionName/versionCode) and
+inserts the new top CHANGELOG entry. Versions still represent **production
+states**, not commits — but because every release is a production state, each
+release bumps.
 
 ## Git tag format
 

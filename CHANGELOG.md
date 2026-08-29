@@ -34,6 +34,14 @@ a working "Pair a new device" flow, and the developer GitHub link.
   Pair a new device wiring, developer link); this entry exists to roll them
   out to installed V2C003 devices as an auto-update-visible release.
 
+### Tooling
+
+- Added `scripts/bump-version.sh` — one-command V/C/P version bump for small
+  patches (`V2C004` → `V2C004P01`, versionCode 200400 → 200401) and change
+  cycles, updating `build.gradle.kts` + CHANGELOG. The rule is now explicit:
+  **every release, including small patches, must raise versionCode** so the
+  in-app auto-update prompt always fires (documented in `docs/VERSIONING.md`).
+
 ---
 
 ## V2C003 — 2026-08-29
