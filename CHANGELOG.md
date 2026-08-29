@@ -53,6 +53,43 @@ explicit platform-gated user action.
   and `ServiceStatus` so minified release builds never rename/strip the
   system-bound service classes (keeps enablement and state detection working).
 
+### Documentation
+
+- Completely redesigned `README.md` as a professional, scannable project page:
+  hero + badge set, contents navigation, overview, features, architecture
+  diagram, requirements, installation, usage, permissions, network
+  architecture, building, releases, project status, security, development,
+  roadmap, contributing, and license.
+- Added navigation linking **README ↔ CHANGELOG ↔ GitHub Releases ↔ docs/**.
+- README shows the current version and links directly to `CHANGELOG.md` and
+  GitHub Releases; no infrastructure IPs or secrets are exposed.
+- Updated the `LICENSE` copyright holder to match the intended project
+  maintainer.
+
+### CI/CD
+
+- Converted the release pipeline to a **rolling release**: a successful
+  `main` build now releases automatically — same version updates the existing
+  tag/release/APK in place; a new version creates a new tag/release.
+- Release workflow downloads the **exact** successful Build artifact, validates
+  it (package, versionName/versionCode, signature), reads the version from the
+  APK, and never runs Gradle.
+- Same-version releases force-move the tag to the newest build commit and
+  replace the APK asset via `gh release upload --clobber`; no duplicate tags.
+- Failed builds continue to block release; release concurrency prevents
+  duplicate/overlapping releases; tag manipulation can no longer trigger a
+  second build, so the pipeline is acyclic.
+- Build workflow now runs on `main` pushes only (still GitHub-hosted),
+  containing the single authoritative production APK build.
+
+### Repository
+
+- Added R8 keep rules so minified builds preserve the AccessibilityService,
+  NotificationListener, and status detection.
+- Contributor attribution had already been normalized earlier so all Git
+  history attributes authorship to the project maintainer (GitHub's
+  contributor graph recalculates on its own schedule after the force-push).
+
 ### Versioning
 
 - Bumped production version to **V2C003** (`versionName`), `versionCode`

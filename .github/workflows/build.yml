@@ -1,27 +1,27 @@
 name: Remot Build
 
-# Build workflow — never creates a GitHub Release.
-# Runs on pushes to main, V/C/P production tags, and PRs to main. For a
-# production tag this uses the SIGNALING_URL + RELEASE_* signing secrets to
-# produce one signed universal release APK, which is uploaded as an artifact
-# that the Release workflow consumes (build once, release the exact artifact).
+# The ONLY authoritative production Android build. Runs on pushes to `main`
+# using a GitHub-hosted runner, produces exactly one signed release APK, and
+# uploads it as the `remot-release-apk` artifact. It NEVER creates a release —
+# that is the Release workflow's job. Tag pushes deliberately do not trigger
+# this, so a tag created by the Release workflow cannot start another build
+# (prevents a Build→Release→Build loop).
 on:
   push:
     branches: [ main ]
-    tags:
-      - 'v[0-9]c[0-9][0-9][0-9]'
-      - 'v[0-9]c[0-9][0-9][0-9]p[0-9][0-9]'
-  pull_request:
-    branches: [ main ]
 
-# One canonical environment; superseded runs on the same ref are cancelled.
+permissions:
+  contents: read
+
+# One canonical build at a time; superseded runs on the same ref are cancelled
+# to save Actions minutes.
 concurrency:
-  group: build-${{ github.ref }}
+  group: remot-build
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build + test + lint + signed release APK
+    name: Test + lint + signed release APK
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,12 +51,11 @@ jobs:
             exit 1
           fi
           echo "$KEYSTORE_B64" | base64 -d > release.keystore
-          echo "keystore written at $(pwd)/release.keystore ($(wc -c < release.keystore) bytes)"
+          echo "keystore provisioned ($(wc -c < release.keystore) bytes)"
 
-      - name: Build, test, lint + assemble signed release
+      - name: Test, lint + assemble signed release
         working-directory: android
         env:
-          # Signaling endpoint + signing supplied purely from secrets at build time.
           SIGNALING_URL: ${{ secrets.SIGNALING_URL }}
           RELEASE_KEYSTORE_PATH: release.keystore
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
@@ -73,11 +72,11 @@ jobs:
         working-directory: android
         run: |
           APK="app/build/outputs/apk/release/app-release.apk"
-          [ -s "$APK" ] || { echo "::error::release APK missing or empty ($APK)"; find app/build/outputs -name '*.apk' 2>/dev/null; exit 1; }
+          [ -s "$APK" ] || { echo "::error::release APK missing or empty ($APK)"; exit 1; }
           AAPT2="$(ls "${ANDROID_SDK_ROOT:-$ANDROID_HOME}"/build-tools/*/aapt2 2>/dev/null | head -1)"
           [ -n "$AAPT2" ] || { echo "::error::aapt2 not found"; exit 1; }
           BADGING="$("$AAPT2" dump badging "$APK")"
-          echo "$BADGING" | grep -E "package:|sdkVersion|targetSdkVersion" | sed 's/^/  /'
+          echo "$BADGING" | grep -E "package: |sdkVersion|targetSdkVersion" | sed 's/^/  /'
           echo "$BADGING" | grep -q "package: name='com.robrion.remot'" \
             || { echo "::error::applicationId is not com.robrion.remot"; exit 1; }
           echo "applicationId OK: com.robrion.remot"

@@ -1,111 +1,147 @@
 name: Remot Release
 
-# Release workflow — the ONLY trigger is a successful Remot Build workflow
-# (workflow_run). It runs for every Build completion but ONLY acts on V/C/P
-# production tags on main: it downloads the EXACT APK artifact produced by that
-# build, re-validates it, and publishes the GitHub Release. It never rebuilds
-# the APK and never runs on `push` directly, giving exactly one release path.
-# Non-tag completions (main pushes, PRs) skip cleanly; failed builds never
-# reach Release.
+# Rolling production release. Runs AFTER a successful Remot Build workflow
+# (`workflow_run`), downloads the EXACT artifact that build produced, reads the
+# version from the APK, and publishes it:
+#
+#   * New version  -> create tag + release, attach the APK.
+#   * Same version -> force-move the existing tag to the newest build commit,
+#                     update the existing release, and replace the APK asset.
+#
+# It NEVER runs Gradle / builds an APK. It creates/moves tags via the git refs
+# API only, so it cannot recursively trigger the Build workflow (Build only
+# responds to branch pushes on `main`), which keeps the pipeline acyclic.
 on:
   workflow_run:
     workflows: [ "Remot Build" ]
-    types:
-      - completed
+    types: [ completed ]
 
 permissions:
   contents: write
   actions: read
 
-# Only one production release at a time; never cancel a running release.
+# One production release at a time; never cancel a running release.
 concurrency:
   group: remot-release
   cancel-in-progress: false
 
 jobs:
   release:
-    name: Publish GitHub Release from verified build artifact
+    name: Publish / update GitHub Release from the Build artifact
     runs-on: ubuntu-latest
     if: >
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push'
+      github.event.workflow_run.head_branch == 'main'
 
     steps:
-      # Resolve the ref into version metadata. A non-production-tag push (main,
-      # branch) yields an empty version and the rest of the job skips cleanly.
-      - name: Extract version metadata (skips non-tag pushes)
-        id: meta
-        env:
-          REF: ${{ github.event.workflow_run.head_branch }}
-        run: |
-          REF="${REF#refs/tags/}"
-          if [[ "$REF" =~ ^v([0-9])c([0-9]{3})(p([0-9]{2}))?$ ]]; then
-            V="${BASH_REMATCH[1]}"; C=$((10#${BASH_REMATCH[2]})); P=$((10#${BASH_REMATCH[4]:-0}))
-            CODE=$(( V * 100000 + C * 100 + P ))
-            NAME="V${V}C$(printf '%03d' "$C")"
-            [[ -n "${BASH_REMATCH[4]}" ]] && NAME="${NAME}P$(printf '%02d' "$P")"
-            echo "version_name=$NAME" >> "$GITHUB_ENV"
-            echo "version_code=$CODE" >> "$GITHUB_ENV"
-            echo "apk_name=remot-$REF.apk" >> "$GITHUB_ENV"
-            echo "release_title=Remot $NAME" >> "$GITHUB_ENV"
-            echo "release_tag=$REF" >> "$GITHUB_ENV"
-          else
-            echo "Ref '$REF' is not a V/C/P production tag — skipping release."
-          fi
-
-      # Release MUST NOT rebuild the APK — it only validates the exact Build
-      # artifact. apksigner/aapt2 still need the Android SDK build-tools, so we
-      # install the SDK toolchain here for validation only (no Gradle, no build).
       - name: Install Android build-tools for APK validation
-        if: env.release_tag != ''
         uses: android-actions/setup-android@v3
 
       - name: Install required build-tools
-        if: env.release_tag != ''
         run: sdkmanager "build-tools;34.0.0"
 
+      - uses: actions/checkout@v4
+
       - name: Download exact build artifact
-        if: env.release_tag != ''
         uses: actions/download-artifact@v4
         with:
           name: remot-release-apk
-          path: release-artifact
+          path: artifact
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
 
-      - name: Validate artifact before release
-        if: env.release_tag != ''
+      - name: Detect version + validate artifact
+        id: meta
         run: |
-          APK=$(find release-artifact -name '*.apk' | head -1)
-          [ -s "$APK" ] || { echo "::error::no APK in artifact"; exit 1; }
-          echo "artifact: $APK ($(wc -c < "$APK") bytes)"
-          [[ "$APK" == *split_config* ]] && { echo "::error::split APK — refusing to release"; exit 1; }
-          file "$APK" | grep -qi "zip\|android" || { echo "::error::not a valid APK/ZIP"; exit 1; }
-          AAPT2="$(ls "${ANDROID_SDK_ROOT:-$ANDROID_HOME}"/build-tools/*/aapt2 2>/dev/null | head -1)"
-          BADGING="$("$AAPT2" dump badging "$APK")"
-          echo "$BADGING" | grep "package:" | sed 's/^/  /'
-          echo "$BADGING" | grep -q "package: name='com.robrion.remot'" || { echo "::error::applicationId mismatch"; exit 1; }
-          echo "$BADGING" | grep -q "versionName='${{ env.version_name }}'" || { echo "::error::versionName mismatch (expected ${{ env.version_name }})"; exit 1; }
-          echo "$BADGING" | grep -q "versionCode='${{ env.version_code }}'" || { echo "::error::versionCode mismatch (expected ${{ env.version_code }})"; exit 1; }
-          APKSIGNER="$(ls "${ANDROID_SDK_ROOT:-$ANDROID_HOME}"/build-tools/*/apksigner 2>/dev/null | head -1)"
-          [ -n "$APKSIGNER" ] || { echo "::error::apksigner not found"; exit 1; }
-          "$APKSIGNER" verify "$APK" || { echo "::error::APK signature verification failed"; exit 1; }
-          "$APKSIGNER" verify --print-certs "$APK" | grep -E "Signer #|SHA-256 digest|certificate DN" | sed 's/^/   /'
-          cp "$APK" "$GITHUB_WORKSPACE/${{ env.apk_name }}"
-          echo "artifact validation PASSED (${{ env.apk_name }})"
+          set -euo pipefail
+          APK=$(find artifact -name '*.apk' | head -1)
+          [ -s "$APK" ] || { echo "::error::no release APK in artifact"; exit 1; }
+          AAPT2=$(ls "${ANDROID_SDK_ROOT:-$ANDROID_HOME}"/build-tools/*/aapt2 | head -1)
+          BADGING=$("$AAPT2" dump badging "$APK")
+          PKG=$(echo "$BADGING" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+          VER=$(echo "$BADGING" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+          VERCODE=$(echo "$BADGING" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
+          [ -n "$PKG" ] && [ "$PKG" = "com.robrion.remot" ] || { echo "::error::applicationId mismatch: '$PKG'"; exit 1; }
+          if [[ ! "$VER" =~ ^V[0-9]C[0-9]{3}(P[0-9]{2})?$ ]]; then
+            echo "::error::unrecognized versionName: '$VER'"; exit 1
+          fi
+          APKSIGNER=$(ls "${ANDROID_SDK_ROOT:-$ANDROID_HOME}"/build-tools/*/apksigner | head -1)
+          "$APKSIGNER" verify "$APK" || { echo "::error::APK signature invalid"; exit 1; }
+          TAG="${VER,,}"
+          cp "$APK" "$GITHUB_WORKSPACE/remot-${VER}.apk"
+          echo "version=$VER" >> "$GITHUB_ENV"
+          echo "version_code=$VERCODE" >> "$GITHUB_ENV"
+          echo "tag=$TAG" >> "$GITHUB_ENV"
+          echo "apk_name=remot-${VER}.apk" >> "$GITHUB_ENV"
+          echo "commit=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_ENV"
+          echo "build_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_ENV"
+          # Is this version already released (rolling update) or brand new?
+          EXIST=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${TAG}")
+          if [ "$EXIST" = "200" ]; then echo "existing_release=true" >> "$GITHUB_ENV"; else echo "existing_release=false" >> "$GITHUB_ENV"; fi
 
-      - name: Create GitHub Release
-        if: env.release_tag != ''
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ github.token }}
-          tag_name: ${{ env.release_tag }}
-          name: ${{ env.release_title }}
-          body: |
-            Remot production release **${{ env.release_title }}**.
+      - name: Verify CHANGELOG matches version
+        run: |
+          set -euo pipefail
+          TOP=$(grep -m1 '^## ' CHANGELOG.md || true)
+          if [[ "$TOP" != "## $version"* ]]; then
+            echo "::error::CHANGELOG top entry is '$TOP' but APK version is '$version'"; exit 1
+          fi
 
-            Built and validated by the **Remot Build** workflow from this exact
-            commit; no rebuild at release time. V/C/P versioning, see `docs/VERSIONING.md`.
-          files: ${{ env.apk_name }}
-          draft: false
-          prerelease: false
+      - name: Set tag to build commit (create or force-move)
+        run: |
+          set -euo pipefail
+          AUTH="Authorization: Bearer ${{ github.token }}"
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" \
+            "https://api.github.com/repos/${{ github.repository }}/git/ref/tags/${tag}")
+          if [ "$CODE" = "200" ]; then
+            HTTP=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH -H "$AUTH" \
+              -H "Accept: application/vnd.github+json" \
+              -d "{\"sha\":\"$commit\",\"force\":true}" \
+              "https://api.github.com/repos/${{ github.repository }}/git/refs/tags/${tag}")
+            [ "$HTTP" = "200" ] || { echo "::error::could not update tag ${tag} (HTTP $HTTP)"; exit 1; }
+            echo "Tag ${tag} -> $commit (updated)"
+          else
+            HTTP=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "$AUTH" \
+              -H "Accept: application/vnd.github+json" \
+              -d "{\"ref\":\"refs/tags/${tag}\",\"sha\":\"$commit\"}" \
+              "https://api.github.com/repos/${{ github.repository }}/git/refs")
+            [ "$HTTP" = "201" ] || { echo "::error::could not create tag ${tag} (HTTP $HTTP)"; exit 1; }
+            echo "Tag ${tag} -> $commit (created)"
+          fi
+
+      - name: Compose release notes
+        run: |
+          cat > /tmp/notes.md <<EOF
+          # Remot $version
+
+          Version: $version
+          Commit: $commit
+          Build: $build_id
+
+          Production APK built and validated by the Remot Build workflow (GitHub-hosted runner).
+
+          ## APK
+
+          \`$apk_name\`
+
+          ## Changelog
+
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md).
+          EOF
+
+      - name: Publish or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$existing_release" = "true" ]; then
+            echo "Updating existing release $version (#$build_id, $commit)"
+            gh release edit "$tag" --title "Remot $version" --notes-file /tmp/notes.md
+            gh release upload "$tag" "$GITHUB_WORKSPACE/$apk_name" --clobber
+          else
+            echo "Creating new release $version (#$build_id, $commit)"
+            gh release create "$tag" "$GITHUB_WORKSPACE/$apk_name" \
+              --title "Remot $version" --notes-file /tmp/notes.md
+          fi
