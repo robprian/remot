@@ -69,6 +69,13 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 
+    // Let JVM unit tests call android.* stubs (e.g. android.util.Log) and get
+    // default values instead of throwing "not mocked" — so network/failure-path
+    // tests here can run without an emulator or Robolectric.
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     // Persistent production signing. Requires ALL four values via Gradle property
     // or env (set from GitHub Secrets in CI, or gradle.properties locally). If any
     // are missing the release build FAILS — we never silently sign with the debug

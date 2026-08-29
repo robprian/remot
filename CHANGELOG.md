@@ -77,6 +77,10 @@ latency plus WebRTC connection-route diagnostics.
 - Notification listener manifest (merged): exported=true + BIND_NOTIFICATION_LISTENER_SERVICE + intent-filter — PASS
 - STUN/TURN probe against local coturn with production credentials: STUN OK, TURN Allocate OK (measured ms) — PASS
 - Debug build / unit tests / lint / signed release build / apksigner verify — PASS (local)
+- Added unit tests for `ServiceStatus` (Settings.Secure component-list membership
+  + installed/enabled/connected resolver) and `StunTurnProbe` (loopback mock
+  STUN/TURN: binding, 401 challenge, authenticated Allocate, timeout, DNS
+  failure) — execution verified on the GitHub Actions Build run
 - Real-device Android 16 enable + remote session: pending device testing
 
 ---

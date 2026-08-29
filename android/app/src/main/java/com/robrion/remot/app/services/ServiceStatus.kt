@@ -5,9 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
-import android.text.TextUtils
-import android.view.accessibility.AccessibilityManager
 import com.robrion.remot.host.RemotNotificationListener
+import com.robrion.remot.host.RemoteInputService
 
 /**
  * Human-readable lifecycle states for a system-bound service. The distinction
@@ -27,19 +26,12 @@ object ServiceStatus {
     // ---- Accessibility ----
 
     fun accessibilityState(context: Context): ServiceState {
-        // 1) Installed? (component declared in the merged manifest)
         val installed = componentEnabled(
             context, ComponentName(context, "com.robrion.remot.host.RemoteInputService")
         ) != null
-        if (!installed) return ServiceState.NOT_INSTALLED
-
-        // 2) Enabled in Settings? (authoritative — read the secure setting)
         val enabled = isAccessibilityServiceEnabled(context)
-        if (!enabled) return ServiceState.INSTALLED
-
-        // 3) Actually connected by the system? (the service object is alive)
-        return if (isAccessibilityServiceConnected(context)) ServiceState.CONNECTED
-        else ServiceState.ENABLED
+        val connected = RemoteInputService.isConnected
+        return resolveServiceState(installed, enabled, connected)
     }
 
     /**
@@ -54,22 +46,11 @@ object ServiceStatus {
         val enabledServices = Settings.Secure.getString(
             context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         ) ?: return false
-        val enabledList = TextUtils.SimpleStringSplitter(':').apply {
-            enabledServices.let { setString(it) }
-        }
-        for (name in enabledList) {
-            // Compare both the flattened form and the plain component name;
-            // some OEMs store one or the other.
-            val normalized = name.trim()
-            if (normalized.equals(expected, ignoreCase = true) ||
-                normalized.equals(
-                    "com.robrion.remot/.host.RemoteInputService", ignoreCase = true
-                )
-            ) {
-                return true
-            }
-        }
-        return false
+        // Compare both the flattened form and the plain component name; some
+        // OEMs store one or the other.
+        return isComponentListed(
+            enabledServices, expected, "com.robrion.remot/.host.RemoteInputService"
+        )
     }
 
     /**
@@ -78,23 +59,17 @@ object ServiceStatus {
      * and clears it in onDestroy(), so this reflects the real system bind state.
      */
     fun isAccessibilityServiceConnected(context: Context): Boolean =
-        com.robrion.remot.host.RemoteInputService.isConnected
+        RemoteInputService.isConnected
 
     // ---- Notification Listener ----
 
     fun notificationListenerState(context: Context): ServiceState {
-        // 1) Installed?
         val installed = componentEnabled(
             context, ComponentName(context, "com.robrion.remot.host.RemotNotificationListener")
         ) != null
-        if (!installed) return ServiceState.NOT_INSTALLED
-
-        // 2) Access granted in Settings?
-        if (!isNotificationListenerEnabled(context)) return ServiceState.INSTALLED
-
-        // 3) Actually connected?
-        return if (RemotNotificationListener.isConnected) ServiceState.CONNECTED
-        else ServiceState.ENABLED
+        val enabled = isNotificationListenerEnabled(context)
+        val connected = RemotNotificationListener.isConnected
+        return resolveServiceState(installed, enabled, connected)
     }
 
     /**
@@ -111,16 +86,44 @@ object ServiceStatus {
         val flat = Settings.Secure.getString(
             context.contentResolver, "enabled_notification_listeners"
         ) ?: return false
-        val split = TextUtils.SimpleStringSplitter(':').apply { setString(flat) }
-        for (name in split) {
-            if (name.trim().equals(expected, ignoreCase = true)) return true
-        }
-        return false
+        return isComponentListed(flat, expected)
     }
 
     // ---- Helpers ----
 
-    /** Resolve the component as declared in the merged manifest; null = not declared. */
+    /**
+     * Pure membership predicate over a Settings.Secure ':'-delimited component
+     * list (e.g. ENABLED_ACCESSIBILITY_SERVICES). Pure JVM — no Android
+     * dependency — so it is fully unit-testable. Trims whitespace and compares
+     * case-insensitively to tolerate OEM formatting; every match must be a whole
+     * component name, never a bare substring.
+     */
+    internal fun isComponentListed(flattenedList: String?, vararg expected: String): Boolean {
+        if (flattenedList.isNullOrEmpty()) return false
+        val wanted = Array(expected.size) { expected[it].trim() }
+        for (entry in flattenedList.split(':')) {
+            val name = entry.trim()
+            if (name.isEmpty()) continue
+            for (w in wanted) {
+                if (name.equals(w, ignoreCase = true)) return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * Pure state resolver. The precedence — installed → enabled in Settings →
+     * actually connected by the system — encodes the fix for "installed is not
+     * enabled" and "enabled in Settings is not yet connected". Pure JVM.
+     */
+    internal fun resolveServiceState(installed: Boolean, enabled: Boolean, connected: Boolean): ServiceState =
+        when {
+            !installed -> ServiceState.NOT_INSTALLED
+            !enabled -> ServiceState.INSTALLED
+            !connected -> ServiceState.ENABLED
+            else -> ServiceState.CONNECTED
+        }
+
     private fun componentEnabled(context: Context, component: ComponentName): ComponentName? {
         return try {
             context.packageManager.getServiceInfo(component, 0)
