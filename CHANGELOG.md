@@ -12,6 +12,44 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C004P03 — 2026-08-29
+
+### Summary
+
+Adds on-device network debugging so "Signaling Unreachable" can be diagnosed
+from the phone instead of by guesswork: a live **Signaling debug log** in
+Diagnostics that records every WebSocket connect attempt, endpoint, and the
+exact OS-level error with a copy-to-clipboard button, plus **Chucker**, an
+on-device HTTP inspector for the app's other requests (GitHub update check).
+
+### Changed
+
+- Bumped production version to **V2C004P03** (versionCode 200403).
+
+### Added
+
+- **`SignalingDebugLog`** — a bounded, thread-safe, in-memory log of the
+  signaling WebSocket lifecycle (CONNECTING / CONNECTED / FAILED / CLOSED /
+  REGISTER-FAILED), including which fallback endpoint was tried and the raw
+  connection error (e.g. `Software caused connection abort`). WebSocket does
+  not go through OkHttp interceptors, so Chucker cannot show it — this is the
+  authoritative on-device record, also mirrored to logcat as `RemotSignaling`.
+- **Diagnostics → “Signaling debug log”** card listing the most recent
+  attempts with a **Copy log** button (newline-separated plain text to paste
+  to the developer) and the last-failure summary.
+- **Chucker** (`com.github.chuckerteam.chucker:library:4.0.0`; 4.3.x needs
+  compileSdk 36, out of scope for this project's AGP toolchain) wired to the
+  update-checker HTTP client, plus an **HTTP inspector** button in the same
+  card that opens the Chucker UI. ProGuard keep rules added for the minified
+  release build.
+
+### Notes
+
+- Chucker does **not** capture WebSockets (ChuckerTeam/chucker#675); it is
+  included for the app's HTTP traffic, while the actual signaling diagnosis
+  uses `SignalingDebugLog`.
+
+---
 ## V2C004P02 — 2026-08-29
 
 ### Summary

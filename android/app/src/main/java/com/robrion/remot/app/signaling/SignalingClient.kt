@@ -97,11 +97,13 @@ class SignalingClient(
     fun connect() {
         closedByUser = false
         authFailed = false
+        SignalingDebugLog.record(currentUrl(), "CONNECTING")
         ws = client.newWebSocket(Request.Builder().url(currentUrl()).build(), object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 isConnected = true
                 lastConnectError = null
                 reconnectAttempt = 0
+                SignalingDebugLog.record(signalingUrl, "CONNECTED")
                 onReconnected?.invoke()
                 // Present the public key; the server verifies deviceId == sha256(pub),
                 // challenges us with a nonce (see onAuthChallenge), and only then
@@ -118,16 +120,18 @@ class SignalingClient(
                 // Surface WHY we can't reach signaling (e.g. cleartext-blocked,
                 // DNS, TLS, or the server is down) so it's visible in Diagnostics.
                 val reason = when {
-                    !t.message.isNullOrBlank() -> t.message
+                    !t.message.isNullOrBlank() -> t.message.orEmpty()
                     response != null && response.code > 0 -> "HTTP " + response.code
                     else -> "connection failed"
                 }
                 lastConnectError = "$reason @ $signalingUrl"
+                SignalingDebugLog.record(signalingUrl, "FAILED", reason)
                 rotateEndpoint()
                 scheduleReconnect()
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 if (lastConnectError == null) lastConnectError = reason.ifBlank { "closed ($code)" }
+                SignalingDebugLog.record(signalingUrl, "CLOSED", reason.ifBlank { "code $code" })
                 rotateEndpoint()
                 scheduleReconnect()
             }
@@ -165,9 +169,11 @@ class SignalingClient(
         when (m.getString("type")) {
             "registered" -> listener.onRegistered(m.optJSONArray("iceServers") ?: JSONArray())
             "register-failed" -> {
+                val reason = m.optString("reason", "unknown")
                 isConnected = false
                 authFailed = true
-                listener.onRegisterFailed(m.optString("reason", "unknown"))
+                SignalingDebugLog.record(signalingUrl, "REGISTER-FAILED", reason)
+                listener.onRegisterFailed(reason)
             }
             "session-code" -> listener.onSessionCode(m.getString("code"))
             "join-request" -> listener.onJoinRequest(

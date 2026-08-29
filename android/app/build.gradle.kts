@@ -45,9 +45,9 @@ android {
         minSdk = 25
         targetSdk = 35
         // V/C/P production versioning (see docs/VERSIONING.md):
-        // versionCode = V*100000 + C*100 + P  →  V2C004P02 = 200402
-        versionCode = 200402
-        versionName = "V2C004P02"
+        // versionCode = V*100000 + C*100 + P  →  V2C004P03 = 200403
+        versionCode = 200403
+        versionName = "V2C004P03"
 
         // Signaling endpoint, overridable at build time. On CI it is supplied via
         // the SIGNALING_URL secret; locally it defaults to a build-time property.
@@ -147,6 +147,13 @@ dependencies {
 
     // Signaling transport
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // On-device HTTP inspector (Chucker) for diagnosing connectivity issues.
+    // Note: Chucker does NOT intercept OkHttp WebSockets, so the signaling
+    // connection is logged separately by SignalingDebugLog (see Diagnostics).
+    // 4.0.0 (minCompileSdk=1) works with this project's compileSdk 35; 4.3.x
+    // requires compileSdk 36 and a newer AGP than this project's toolchain.
+    implementation("com.github.chuckerteam.chucker:library:4.0.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

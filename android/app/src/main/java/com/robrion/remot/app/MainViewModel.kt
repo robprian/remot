@@ -7,6 +7,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.robrion.remot.host.RemoteInputService
+import com.chuckerteam.chucker.api.ChuckerInterceptor
 import com.robrion.remot.network.EndpointState
 import com.robrion.remot.network.NetworkHealth
 import com.robrion.remot.services.ServiceState
@@ -79,7 +80,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var updateState by mutableStateOf<UpdateInfoState?>(null); private set
     private var updateDismissed = false
     private var lastUpdateCheckMs = 0L
-    private val updateHttp by lazy { OkHttpClient() }
+    // HTTP client for the GitHub release check, instrumented with Chucker so
+    // the update-check transaction is viewable on-device (Chucker does NOT see
+    // the signaling WebSocket — that is logged by SignalingDebugLog instead).
+    private val updateHttp by lazy {
+        OkHttpClient.Builder()
+            .addInterceptor(ChuckerInterceptor(getApplication()))
+            .build()
+    }
 
     val eglBase: EglBase get() = ServiceLocator.core.eglBase
 

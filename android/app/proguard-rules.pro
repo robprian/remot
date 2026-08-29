@@ -19,3 +19,8 @@
 
 # GitHub release checker (org.json-driven, kept for safety against shrinking).
 -keep class com.robrion.remot.update.** { *; }
+
+# Chucker on-device HTTP inspector — keep its activities so the in-app
+# "HTTP inspector" button can open it in a minified release build.
+-keep class com.chuckerteam.chucker.** { *; }
+-dontwarn com.chuckerteam.chucker.**

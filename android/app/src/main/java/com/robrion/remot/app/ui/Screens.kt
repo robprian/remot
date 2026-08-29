@@ -53,8 +53,17 @@ import com.robrion.remot.ui.components.StatusIndicator
 import com.robrion.remot.ui.components.StatusTone
 import com.robrion.remot.ui.components.statusColor
 import com.robrion.remot.update.UpdateInfoState
+import com.robrion.remot.signaling.SignalingDebugLog
 import com.robrion.remot.webrtc.LinkState
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.os.Build
+import android.widget.Toast
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Single-activity Compose root. Renders the current [Screen] inside a
@@ -320,6 +329,7 @@ private fun ServicesScreen(
         // Diagnostics
         SectionHeading("Diagnostics")
         DiagnosticsCard(vm)
+        SignalingDebugCard()
 
         // Device / app info
         SectionHeading("Device")
@@ -408,6 +418,89 @@ private fun routeLabel(route: String): String = when (route) {
     "srflx" -> "STUN (server-reflexive)"
     "host" -> "Direct (LAN)"
     else -> route
+}
+
+/**
+ * Live log of the signaling WebSocket connection attempts + failures. This is
+ * the on-device source of truth for "Signaling Unreachable" — the exact
+ * OS-level error, the endpoint tried, and a copy-to-clipboard so it can be
+ * pasted to the developer. (Chucker can't see WebSockets, hence this card.)
+ */
+@Composable
+private fun SignalingDebugCard() {
+    val context = LocalContext.current
+    val fmt = remember { SimpleDateFormat("HH:mm:ss", Locale.US) }
+    val entries = SignalingDebugLog.snapshot()
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Signaling debug log", style = MaterialTheme.typography.titleSmall)
+            Text("WebSocket connect attempts recorded on this device.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            if (entries.isEmpty()) {
+                Text("No signaling activity recorded yet. If Signaling shows " +
+                        "Unreachable, the exact attempt + error will appear here.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                entries.take(8).forEach { e ->
+                    Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                        val label = "${fmt.format(Date(e.time))} [${e.event}]"
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = when (e.event) {
+                                "CONNECTED" -> statusColor(StatusTone.SUCCESS)
+                                "FAILED", "CLOSED", "REGISTER-FAILED" -> statusColor(StatusTone.ERROR)
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
+                        Text(e.endpoint, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (e.detail.isNotBlank()) {
+                            Text(e.detail, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+
+            SignalingDebugLog.lastError?.let {
+                Text("Last failure: $it", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error)
+            }
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton({ copySignalingLog(context) }) { Text("Copy log") }
+                TextButton({ openHttpInspector(context) }) { Text("HTTP inspector") }
+            }
+        }
+    }
+}
+
+private fun copySignalingLog(context: Context) {
+    val text = SignalingDebugLog.dump()
+    runCatching {
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        cm?.setPrimaryClip(ClipData.newPlainText("Remot signaling log", text))
+    }
+    Toast.makeText(context, "Signaling log copied (${SignalingDebugLog.snapshot().size} events)", Toast.LENGTH_SHORT).show()
+}
+
+private fun openHttpInspector(context: Context) {
+    val started = runCatching {
+        val cls = Class.forName("com.chuckerteam.chucker.ui.MainActivity")
+        val intent = Intent().setClassName(context.packageName, cls.name)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    }.isSuccess
+    if (!started) {
+        Toast.makeText(context, "HTTP inspector unavailable — open Chucker from its notification", Toast.LENGTH_SHORT).show()
+    }
 }
 
 @Composable
