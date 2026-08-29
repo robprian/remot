@@ -8,6 +8,41 @@ technical changes.
 
 ---
 
+## [Unreleased]
+
+### Summary
+
+Restructured GitHub Actions to eliminate duplicate runs and guarantee release
+permissions: CI and release are now separate workflows.
+
+### Fixed
+
+- GitHub Release creation previously failed with HTTP 403
+  (`Resource not accessible by integration`) — the release workflow now
+  declares `permissions: contents: write` at the workflow level and passes the
+  built-in `github.token` to the release action. No PAT is used.
+- Release pipeline no longer runs on ordinary `main` pushes (previously one
+  workflow matched both `main` and tags, so a branch+tag push executed it
+  twice).
+- Reduced duplicate GitHub Actions execution by splitting the single workflow
+  into `ci.yml` and `release.yml`.
+
+### CI
+
+- `ci.yml` (Remot CI) runs only on pull requests and pushes to `main`: server
+  smoke test + Android build/unit tests/lint + debug APK artifact. It never
+  creates releases. Superseded runs are cancelled (`ci-${{ github.ref }}`).
+- `release.yml` (Remot Release) triggers ONLY on semantic version tags
+  (`v*.*.*`): builds the release APK, names it `remot-v<version>.apk`, and
+  creates a GitHub Release with the APK attached. Runs once per tag
+  (`release-${{ github.ref }}`, no cancellation).
+- Release workflow builds only `assembleRelease` (the redundant debug build
+  was removed). Optional signing via `KEYSTORE_*` secrets is preserved;
+  without them the release APK is unsigned.
+- Release APK naming is tag-driven: tag `v1.0.1` produces `remot-v1.0.1.apk`.
+
+---
+
 ## [1.0.0] - 2026-08-29
 
 ### Summary
