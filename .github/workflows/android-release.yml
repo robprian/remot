@@ -110,7 +110,7 @@ jobs:
             echo "no keystore secret — release APK will be unsigned"
           fi
 
-      - name: Build release APK
+      - name: Build release + debug APKs
         working-directory: android
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -121,7 +121,7 @@ jobs:
           if [ -f release.keystore ]; then
             ARGS+=(-PkeystorePath=release.keystore -PkeystorePassword="$KEYSTORE_PASSWORD" -PkeyAlias="$KEY_ALIAS" -PkeyPassword="$KEY_PASSWORD")
           fi
-          ./gradlew assembleRelease --no-daemon --stacktrace "${ARGS[@]}"
+          ./gradlew assembleRelease assembleDebug --no-daemon --stacktrace "${ARGS[@]}"
 
       - name: Name APKs for the release
         run: |
