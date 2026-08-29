@@ -115,12 +115,17 @@ object ServiceLocator : SignalingClient.Listener {
      * network), the client falls back to:
      *   1. a wss:// variant of the same host:port (if the primary was ws://),
      *   2. a ws:// direct endpoint to BuildConfig.SERVER_IP (when configured),
-     *   3. a wss:// direct endpoint to that IP.
-     * This keeps signaling reachable when a partial route (IPv6, carrier NAT)
-     * blocks the primary path, without hardcoding any address in source.
+     *   3. a wss:// direct endpoint to that IP,
+     *   4. BuildConfig.SERVER_URL_ALT (a full secondary/backup URL, when supplied),
+     *   5. ws:// + wss:// direct endpoints to BuildConfig.SERVER_IP_ALT (backup IP).
+     * This keeps signaling reachable when a partial route (IPv6, carrier NAT) or a
+     * primary-server outage blocks the main path, without hardcoding any address
+     * in source (addresses come from GitHub Secrets at build time).
      */
     private fun signalingUrlCandidates(primary: String): List<String> {
         val out = LinkedHashSet<String>()
+        val ipAlt = BuildConfig.SERVER_IP_ALT
+        val urlAlt = BuildConfig.SERVER_URL_ALT
         out.add(primary)
         try {
             val u = URI(primary)
@@ -134,8 +139,15 @@ object ServiceLocator : SignalingClient.Listener {
                 out.add("ws://$ip:$port$path")
                 if (u.scheme == "ws") out.add("wss://$ip:$port$path")
             }
+            // Backup/alternate endpoints from GitHub Secrets.
+            if (urlAlt.isNotBlank()) out.add(urlAlt)
+            if (ipAlt.isNotBlank()) {
+                out.add("ws://$ipAlt:$port")
+                if (u.scheme == "ws") out.add("wss://$ipAlt:$port")
+            }
         } catch (e: Exception) {
-            // fall back to only the primary
+            // fall back to only the primary (plus any alternate URL that parsed)
+            if (urlAlt.isNotBlank()) out.add(urlAlt)
         }
         return out.toList()
     }

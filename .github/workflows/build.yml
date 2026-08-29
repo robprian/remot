@@ -59,6 +59,8 @@ jobs:
           SIGNALING_URL: ${{ secrets.SIGNALING_URL }}
           SERVER_URL: ${{ secrets.SERVER_URL }}
           SERVER_IP: ${{ secrets.SERVER_IP }}
+          SERVER_URL_ALT: ${{ secrets.SERVER_URL_ALT }}
+          SERVER_IP_ALT: ${{ secrets.SERVER_IP_ALT }}
           RELEASE_KEYSTORE_PATH: release.keystore
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}

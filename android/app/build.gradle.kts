@@ -35,6 +35,11 @@ val signingKeyPass      = configValue("RELEASE_KEY_PASSWORD", "keyPassword")
 val signalingUrl        = configValue("SIGNALING_URL", "SERVER_URL")
 val serverUrl           = configValue("SERVER_URL")
 val serverIp            = configValue("SERVER_IP")
+// Secondary/backup signaling endpoint. CI supplies these from GitHub Secrets
+// so the IP is never baked into source. SERVER_URL_ALT is a full URL (e.g. a
+// backup ws server); SERVER_IP_ALT is a bare IP used as a direct-IP fallback.
+val serverUrlAlt        = configValue("SERVER_URL_ALT")
+val serverIpAlt         = configValue("SERVER_IP_ALT")
 
 android {
     namespace = "com.robrion.remot"
@@ -45,9 +50,9 @@ android {
         minSdk = 25
         targetSdk = 35
         // V/C/P production versioning (see docs/VERSIONING.md):
-        // versionCode = V*100000 + C*100 + P  →  V2C004P03 = 200403
-        versionCode = 200403
-        versionName = "V2C004P03"
+        // versionCode = V*100000 + C*100 + P  →  V2C004P04 = 200404
+        versionCode = 200404
+        versionName = "V2C004P04"
 
         // Signaling endpoint, overridable at build time. On CI it is supplied via
         // the SIGNALING_URL secret; locally it defaults to a build-time property.
@@ -67,6 +72,16 @@ android {
             "String",
             "SERVER_IP",
             "\"" + (serverIp ?: "") + "\""
+        )
+        buildConfigField(
+            "String",
+            "SERVER_URL_ALT",
+            "\"" + (serverUrlAlt ?: "") + "\""
+        )
+        buildConfigField(
+            "String",
+            "SERVER_IP_ALT",
+            "\"" + (serverIpAlt ?: "") + "\""
         )
     }
 

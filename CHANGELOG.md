@@ -12,6 +12,45 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C004P04 — 2026-08-29
+
+### Summary
+
+Adds a fully provisioned backup signaling server (`103.250.10.238`) and wires
+it into the app as an automatic fallback endpoint chain, so connectivity
+survives a primary-server outage or a partial network route. The secondary
+broker runs under systemd auto-restart and its coturn was hardened (the stock
+open-relay coturn that hijacked the public IP is disabled/masked).
+
+### Added
+
+- `BuildConfig.SERVER_URL_ALT` + `BuildConfig.SERVER_IP_ALT`, supplied only
+  from GitHub Secrets at build time (never baked into source).
+- `ServiceLocator.signalingUrlCandidates` now appends the backup endpoints
+  after the primary chain (primary → wss variant → primary IP → **alt URL** →
+  **ws/wss alt IP**), so the `SignalingClient` automatically rotates to the
+  secondary ws server when the primary cannot connect.
+
+### Changed
+
+- Bumped production version to **V2C004P04** (versionCode 200404).
+
+### Ops (secondary server `103.250.10.238`, separate from the primary VPS)
+
+- Provisioned a second signaling broker under `remot-signaling.service` (Node
+  22, auto-restart, `Restart=always`), verified reachable from outside: TCP
+  8080, HTTP `/healthz`, WS upgrade (101), and register round-trip all pass.
+- Provisioned `remot-coturn.service` (STUN/TURN, `use-auth-secret`, relay
+  range 49152–65535, auto-restart); STUN UDP 3478 OK (6 ms) and TURN Allocate
+  returns a 401 challenge (auth enforced) from an external vantage point.
+- **Fixed an open relay:** the host's stock distro coturn had been listening on
+  the private NAT IP (where public traffic lands) with the default
+  no-auth config, so external TURN requests succeeded without credentials.
+  It is now `disabled` + `masked`, leaving only the authenticated
+  `remot-coturn.service`. TURNS TCP 5349 stays closed (no TLS cert; not
+  advertised).
+
+---
 ## V2C004P03 — 2026-08-29
 
 ### Summary
