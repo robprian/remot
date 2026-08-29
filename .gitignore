@@ -23,7 +23,16 @@ android/captures/
 # Firebase
 android/app/google-services.json
 
-# Keystores
+# Keystores / signing material (never commit)
 *.jks
 *.keystore
+*.p12
+*.jks.properties
+*.keystore.properties
+signing.properties
+keystore.properties
 android/app/release.keystore
+android/app/release.jks
+*release*.jks
+*release*.keystore
+*release*.p12

@@ -1,113 +1,98 @@
 name: Remot Release
 
-# Release ONLY — triggered by V/C/P production tags (v1c001, v1c001p01, ...).
-# Does not run on branch pushes or pull requests; validation lives in ci.yml,
-# so a tag push executes exactly one workflow run (this one).
-# Version scheme: docs/VERSIONING.md.
+# Release workflow — the ONLY trigger is a successful Remot Build workflow
+# (workflow_run). It runs for every Build completion but ONLY acts on V/C/P
+# production tags on main: it downloads the EXACT APK artifact produced by that
+# build, re-validates it, and publishes the GitHub Release. It never rebuilds
+# the APK and never runs on `push` directly, giving exactly one release path.
+# Non-tag completions (main pushes, PRs) skip cleanly; failed builds never
+# reach Release.
 on:
-  push:
-    tags:
-      - 'v[0-9]c[0-9][0-9][0-9]'
-      - 'v[0-9]c[0-9][0-9][0-9]p[0-9][0-9]'
+  workflow_run:
+    workflows: [ "Remot Build" ]
+    types:
+      - completed
 
-# Smallest scope needed to create a GitHub Release and attach APKs.
 permissions:
   contents: write
+  actions: read
 
-# Never allow two identical release jobs to race on the same tag.
+# Only one production release at a time; never cancel a running release.
 concurrency:
-  group: release-${{ github.ref }}
+  group: remot-release
   cancel-in-progress: false
 
 jobs:
   release:
-    name: Build APK + GitHub Release
+    name: Publish GitHub Release from verified build artifact
     runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-          cache: gradle
-
-      - uses: android-actions/setup-android@v3
-
-      - name: Install required SDK packages
-        run: sdkmanager "platforms;android-35" "build-tools;34.0.0"
-
-      - name: Make gradlew executable
-        working-directory: android
-        run: chmod +x gradlew
-
-      - name: Provision release keystore (if secrets configured)
-        working-directory: android
-        env:
-          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
-        run: |
-          if [ -n "$KEYSTORE_B64" ]; then
-            echo "$KEYSTORE_B64" | base64 -d > release.keystore
-            echo "keystore provided"
-          else
-            echo "no keystore secret — release APK will be unsigned"
-          fi
-
-      - name: Build release APK
-        working-directory: android
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: |
-          ARGS=()
-          if [ -f release.keystore ]; then
-            ARGS+=(-PkeystorePath=release.keystore -PkeystorePassword="$KEYSTORE_PASSWORD" -PkeyAlias="$KEY_ALIAS" -PkeyPassword="$KEY_PASSWORD")
-          fi
-          ./gradlew assembleRelease --no-daemon --stacktrace "${ARGS[@]}"
-
-      - name: Name release APK
-        run: |
-          cp android/app/build/outputs/apk/release/app-release.apk "remot-${GITHUB_REF_NAME}.apk" 2>/dev/null \
-            || cp android/app/build/outputs/apk/release/app-release-unsigned.apk "remot-${GITHUB_REF_NAME}.apk"
-
-      - name: Verify APK metadata matches tag
-        run: |
-          # Tag v1c001p37 → versionName V1C001P37, versionCode 100137
-          TAG="${GITHUB_REF_NAME#v}"
-          if [[ "$TAG" =~ ^([0-9])c([0-9]{3})(p([0-9]{2}))?$ ]]; then
-            V="${BASH_REMATCH[1]}"
-            C=$((10#${BASH_REMATCH[2]}))
-            P=$((10#${BASH_REMATCH[4]:-0}))
-            EXPECTED_CODE=$((V * 100000 + C * 100 + P))
-            EXPECTED_NAME="V${V}C$(printf '%03d' "$C")"
-            if [ -n "${BASH_REMATCH[4]}" ]; then
-              EXPECTED_NAME="${EXPECTED_NAME}P$(printf '%02d' "$P")"
-            fi
-          else
-            echo "::error::unexpected tag format ${GITHUB_REF_NAME}"
-            exit 1
-          fi
-          AAPT2="$(ls "${ANDROID_SDK_ROOT:-$ANDROID_HOME}"/build-tools/*/aapt2 2>/dev/null | head -1)"
-          [ -n "$AAPT2" ] || { echo "::error::aapt2 not found"; exit 1; }
-          BADGING="$("$AAPT2" dump badging "remot-${GITHUB_REF_NAME}.apk")"
-          echo "$BADGING" | grep -E "package:" | sed 's/^/  /'
-          echo "$BADGING" | grep -q "versionName='$EXPECTED_NAME'" \
-            || { echo "::error::versionName mismatch (expected $EXPECTED_NAME)"; exit 1; }
-          echo "$BADGING" | grep -q "versionCode='$EXPECTED_CODE'" \
-            || { echo "::error::versionCode mismatch (expected $EXPECTED_CODE)"; exit 1; }
-          echo "APK metadata OK: $EXPECTED_NAME (versionCode $EXPECTED_CODE)"
-
-      - name: Compute release name
+      # Resolve the ref into version metadata. A non-production-tag push (main,
+      # branch) yields an empty version and the rest of the job skips cleanly.
+      - name: Extract version metadata (skips non-tag pushes)
         id: meta
-        run: echo "release_name=Remot ${GITHUB_REF_NAME^^}" >> "$GITHUB_OUTPUT"
+        env:
+          REF: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          REF="${REF#refs/tags/}"
+          if [[ "$REF" =~ ^v([0-9])c([0-9]{3})(p([0-9]{2}))?$ ]]; then
+            V="${BASH_REMATCH[1]}"; C=$((10#${BASH_REMATCH[2]})); P=$((10#${BASH_REMATCH[4]:-0}))
+            CODE=$(( V * 100000 + C * 100 + P ))
+            NAME="V${V}C$(printf '%03d' "$C")"
+            [[ -n "${BASH_REMATCH[4]}" ]] && NAME="${NAME}P$(printf '%02d' "$P")"
+            echo "version_name=$NAME" >> "$GITHUB_ENV"
+            echo "version_code=$CODE" >> "$GITHUB_ENV"
+            echo "apk_name=remot-$REF.apk" >> "$GITHUB_ENV"
+            echo "release_title=Remot $NAME" >> "$GITHUB_ENV"
+            echo "release_tag=$REF" >> "$GITHUB_ENV"
+          else
+            echo "Ref '$REF' is not a V/C/P production tag — skipping release."
+          fi
+
+      - name: Download exact build artifact
+        if: env.release_tag != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: remot-release-apk
+          path: release-artifact
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Validate artifact before release
+        if: env.release_tag != ''
+        run: |
+          APK=$(find release-artifact -name '*.apk' | head -1)
+          [ -s "$APK" ] || { echo "::error::no APK in artifact"; exit 1; }
+          echo "artifact: $APK ($(wc -c < "$APK") bytes)"
+          [[ "$APK" == *split_config* ]] && { echo "::error::split APK — refusing to release"; exit 1; }
+          file "$APK" | grep -qi "zip\|android" || { echo "::error::not a valid APK/ZIP"; exit 1; }
+          AAPT2="$(ls "${ANDROID_SDK_ROOT:-$ANDROID_HOME}"/build-tools/*/aapt2 2>/dev/null | head -1)"
+          BADGING="$("$AAPT2" dump badging "$APK")"
+          echo "$BADGING" | grep "package:" | sed 's/^/  /'
+          echo "$BADGING" | grep -q "package: name='com.robrion.remot'" || { echo "::error::applicationId mismatch"; exit 1; }
+          echo "$BADGING" | grep -q "versionName='${{ env.version_name }}'" || { echo "::error::versionName mismatch (expected ${{ env.version_name }})"; exit 1; }
+          echo "$BADGING" | grep -q "versionCode='${{ env.version_code }}'" || { echo "::error::versionCode mismatch (expected ${{ env.version_code }})"; exit 1; }
+          APKSIGNER="$(ls "${ANDROID_SDK_ROOT:-$ANDROID_HOME}"/build-tools/*/apksigner 2>/dev/null | head -1)"
+          "$APKSIGNER" verify "$APK" || { echo "::error::APK signature verification failed"; exit 1; }
+          cp "$APK" "$GITHUB_WORKSPACE/${{ env.apk_name }}"
+          echo "artifact validation PASSED (${{ env.apk_name }})"
 
       - name: Create GitHub Release
+        if: env.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ github.token }}
-          name: ${{ steps.meta.outputs.release_name }}
+          tag_name: ${{ env.release_tag }}
+          name: ${{ env.release_title }}
           body: |
-            Remot production release **${{ steps.meta.outputs.release_name }}** — V/C/P versioning, see `docs/VERSIONING.md`.
-          files: remot-v*.apk
-          fail_on_unmatched_files: false
+            Remot production release **${{ env.release_title }}**.
+
+            Built and validated by the **Remot Build** workflow from this exact
+            commit; no rebuild at release time. V/C/P versioning, see `docs/VERSIONING.md`.
+          files: ${{ env.apk_name }}
+          draft: false
+          prerelease: false

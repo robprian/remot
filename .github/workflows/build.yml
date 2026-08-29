@@ -1,0 +1,104 @@
+name: Remot Build
+
+# Build workflow — never creates a GitHub Release.
+# Runs on pushes to main, V/C/P production tags, and PRs to main. For a
+# production tag this uses the SIGNALING_URL + RELEASE_* signing secrets to
+# produce one signed universal release APK, which is uploaded as an artifact
+# that the Release workflow consumes (build once, release the exact artifact).
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v[0-9]c[0-9][0-9][0-9]'
+      - 'v[0-9]c[0-9][0-9][0-9]p[0-9][0-9]'
+  pull_request:
+    branches: [ main ]
+
+# One canonical environment; superseded runs on the same ref are cancelled.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build + test + lint + signed release APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install required SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;34.0.0"
+
+      - name: Make gradlew executable
+        working-directory: android
+        run: chmod +x gradlew
+
+      - name: Provision production signing keystore
+        working-directory: android
+        env:
+          KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::RELEASE_KEYSTORE_BASE64 secret is missing — cannot sign a production release APK."
+            exit 1
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > release.keystore
+          echo "keystore written ($(wc -c < release.keystore) bytes)"
+
+      - name: Build, test, lint + assemble signed release
+        working-directory: android
+        env:
+          # Signaling endpoint + signing supplied purely from secrets at build time.
+          SIGNALING_URL: ${{ secrets.SIGNALING_URL }}
+          RELEASE_KEYSTORE_PATH: release.keystore
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$SIGNALING_URL" ]; then
+            echo "::error::SIGNALING_URL secret is missing."
+            exit 1
+          fi
+          ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Validate release APK (identity, version, signature)
+        working-directory: android
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          [ -s "$APK" ] || { echo "::error::release APK missing or empty ($APK)"; find app/build/outputs -name '*.apk' 2>/dev/null; exit 1; }
+          AAPT2="$(ls "${ANDROID_SDK_ROOT:-$ANDROID_HOME}"/build-tools/*/aapt2 2>/dev/null | head -1)"
+          [ -n "$AAPT2" ] || { echo "::error::aapt2 not found"; exit 1; }
+          BADGING="$("$AAPT2" dump badging "$APK")"
+          echo "$BADGING" | grep -E "package:|sdkVersion|targetSdkVersion" | sed 's/^/  /'
+          echo "$BADGING" | grep -q "package: name='com.robrion.remot'" \
+            || { echo "::error::applicationId is not com.robrion.remot"; exit 1; }
+          echo "applicationId OK: com.robrion.remot"
+          APKSIGNER="$(ls "${ANDROID_SDK_ROOT:-$ANDROID_HOME}"/build-tools/*/apksigner 2>/dev/null | head -1)"
+          [ -n "$APKSIGNER" ] || { echo "::error::apksigner not found"; exit 1; }
+          echo "--- apksigner verify ---"
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | grep -E "Verified using|Signer #|SHA-256 digest|certificate DN" | sed 's/^/   /'
+          "$APKSIGNER" verify "$APK" || { echo "::error::APK signature verification failed"; exit 1; }
+          echo "APK signature verified."
+
+      - name: Upload release APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: remot-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+      - name: Upload debug APK artifact (dev builds)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remot-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: ignore
