@@ -1,7 +1,7 @@
-# RemoteAssist — Play Console Declaration Text
+# Remot — Play Console Declaration Text
 
 Ready-to-paste text for each Play Console form. Replace bracketed placeholders
-(`[App Name]`, URLs, contact email) with real values. "RemoteAssist" is a placeholder
+(`[App Name]`, URLs, contact email) with real values. "Remot" is a placeholder
 name; the remote-support framing is deliberate.
 
 > These are drafts to adapt, not legal advice. The Data Safety answers must match the
@@ -17,7 +17,7 @@ name; the remote-support framing is deliberate.
 ### "How does your app use the AccessibilityService API?"
 
 ```
-RemoteAssist is a remote-support / remote-desktop application (comparable to
+Remot is a remote-support / remote-desktop application (comparable to
 TeamViewer or AnyDesk). It uses the AccessibilityService API for one purpose only:
 to let a remote support technician or a device the user has explicitly paired
 perform touch gestures (tap, swipe, scroll), press the Back/Home/Recents
@@ -51,13 +51,13 @@ that is its core, disclosed purpose.
 ### In-app prominent disclosure (shown before sending the user to Settings)
 
 ```
-RemoteAssist needs Accessibility access to control this device remotely.
+Remot needs Accessibility access to control this device remotely.
 
-When you enable this, RemoteAssist can perform taps, swipes, and type text on this
+When you enable this, Remot can perform taps, swipes, and type text on this
 device — but only while you have an active remote session that you have approved,
 and only from a device you have paired and trusted.
 
-RemoteAssist does NOT read your screen content, passwords, or data from other apps,
+Remot does NOT read your screen content, passwords, or data from other apps,
 and never runs in the background collecting information. A notification is always
 shown while remote access is active. You can turn this off at any time in Settings.
 
@@ -76,7 +76,7 @@ shown while remote access is active. You can turn this off at any time in Settin
 
 **Describe the core functionality that requires this type:**
 ```
-RemoteAssist shares this device's screen with a remote, user-authorized device so a
+Remot shares this device's screen with a remote, user-authorized device so a
 support person (or the user's own paired device) can see the screen during a live
 remote-support session. Screen capture is started only after the user grants the
 Android MediaProjection system consent dialog. A non-dismissible foreground-service
@@ -99,7 +99,7 @@ to run within a foreground service of type mediaProjection.
 
 **Describe the core functionality that requires this type:**
 ```
-When a paired remote device requests a session, RemoteAssist briefly runs a
+When a paired remote device requests a session, Remot briefly runs a
 foreground service to re-establish its real-time signaling connection to the remote
 device and complete the connection handshake. This maintains the live, bidirectional
 connection to the specific paired device the user is communicating with. The service
@@ -147,7 +147,7 @@ standard heads-up notification.
 ### 3c. `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`
 
 ```
-RemoteAssist maintains a real-time connection so that a paired device can reach this
+Remot maintains a real-time connection so that a paired device can reach this
 device for a support session, including when the device is idle. Battery-optimization
 exemption is requested only with explicit user action and only to keep the signaling
 connection reachable for incoming session requests. The request is optional; if declined,
@@ -191,7 +191,7 @@ the user has approved.
 ### "Explain how data is collected/used" free-text
 
 ```
-RemoteAssist collects the minimum data needed to connect two paired devices:
+Remot collects the minimum data needed to connect two paired devices:
 - A per-device cryptographic identity (public key) and a Firebase Cloud Messaging
   token, used to pair devices, route connection requests, and wake a device for an
   incoming session.
@@ -218,10 +218,10 @@ revokes all access and stops routing.
 ## 5. Privacy policy (hosted content the Console links to)
 
 ```
-RemoteAssist Privacy Policy
+Remot Privacy Policy
 
-What RemoteAssist does
-RemoteAssist is a remote-support / remote-access tool. It lets a device you have paired
+What Remot does
+Remot is a remote-support / remote-access tool. It lets a device you have paired
 and explicitly authorized view and control this device during a live session that you
 approve. It is not a monitoring or surveillance tool, cannot be hidden, and always shows
 a visible notification while access is active or armed.
@@ -265,14 +265,14 @@ Contact
 ### Title / short description
 
 ```
-Title:  RemoteAssist — Remote Support & Access
+Title:  Remot — Remote Support & Access
 Short:  Securely view and control your own devices, or get remote help — with consent.
 ```
 
 ### Full description (opening — sets the compliant frame)
 
 ```
-RemoteAssist lets you securely connect to and control another Android device you own or
+Remot lets you securely connect to and control another Android device you own or
 have been given permission to help — like remote-desktop tools for phones and tablets.
 
 CONSENT-FIRST BY DESIGN
@@ -289,7 +289,7 @@ USE IT FOR
 - Accessing your own second device from across the room or across the country.
 - IT/helpdesk remote assistance with the user's consent.
 
-RemoteAssist is a remote-support tool. It is not a hidden monitoring or spying app: it
+Remot is a remote-support tool. It is not a hidden monitoring or spying app: it
 cannot be concealed, and it always notifies the person using the device that a session
 is in progress.
 ```

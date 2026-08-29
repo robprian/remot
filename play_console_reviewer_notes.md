@@ -1,4 +1,4 @@
-# RemoteAssist — Play Console Reviewer Notes
+# Remot — Play Console Reviewer Notes
 
 Paste into: Play Console → App content → App access (test credentials) and the
 review-notes field on submission. Replace bracketed placeholders with real values.
@@ -6,7 +6,7 @@ review-notes field on submission. Replace bracketed placeholders with real value
 ---
 
 ```
-REVIEW NOTES — RemoteAssist
+REVIEW NOTES — Remot
 
 App category: Remote support / remote desktop (comparable to AnyDesk, TeamViewer
 QuickSupport). Requires two devices: one "controller" and one "host."

@@ -1,230 +1,173 @@
-# RemoteAssist
+# Remot
 
-[![CI](https://github.com/Vivek202509/remoteassist/actions/workflows/ci.yml/badge.svg)](https://github.com/Vivek202509/remoteassist/actions/workflows/ci.yml)
+**Android-to-Android remote control over the Internet.**
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A consent-first, end-to-end-encrypted **remote support / remote desktop** system for
-Android — bidirectional (either paired device can view & control the other). Built from
-the design developed in this project: WebRTC transport, a signaling + pairing broker,
-coturn for NAT traversal, MediaProjection screen capture, AccessibilityService input,
-FCM device-wake, unattended access, and cryptographic device pairing.
+Remot lets one Android device securely view and control another Android device
+— across the room or across the world. It is a consent-first remote-support
+tool (comparable to AnyDesk / TeamViewer QuickSupport) built entirely on public
+Android APIs: **MediaProjection** for screen capture, **AccessibilityService**
+for input injection, and **WebRTC** (DTLS-SRTP) for end-to-end-encrypted
+transport.
 
-> **Scope of this repo.** This is a complete, organized project scaffold with the core
-> logic implemented and wired together. The **signaling server runs and is tested**
-> (`npm run smoke` → 12/12). The **Android app requires the Android SDK + two physical
-> devices** to build and exercise (MediaProjection, AccessibilityService, and WebRTC
-> cannot run on this host or in a single emulator meaningfully). Integration points that
-> need a real device are marked in code and listed under "What needs a device" below.
+- **No root. No hidden APIs.** Remote control uses only legitimate platform APIs.
+- **Consent-first:** the controlled device always approves a session, and a
+  persistent notification is shown the whole time access is active.
+- **Peer-to-peer media:** the signaling server only brokers connection setup —
+  it never sees your screen.
+- **Android 7.1 → Android 16** (see `docs/ANDROID_COMPATIBILITY.md`).
+
+---
+
+## Features
+
+| | |
+|---|---|
+| Screen sharing | Live MediaProjection capture streamed over WebRTC (H.264/VP8, hardware encoding) |
+| Remote control | Tap, long-press, swipe/drag, Back/Home/Recents, text input via AccessibilityService |
+| Pairing | QR + authenticated ECDH pairing with out-of-band safety-number verification |
+| Unattended access | Scoped, expiring, revocable grants for trusted paired devices (optional) |
+| NAT traversal | STUN + coturn TURN with time-limited credentials; relay only when P2P fails |
+| Reconnection | ICE restart on network change; no black screen, no re-consent |
+| Security | Hardware-backed P-256 identity, signed registration, DTLS-fingerprint MITM protection, encrypted trust store |
+| Device wake | Optional FCM high-priority push wakes an offline host for an incoming session |
+
+## Requirements
+
+- **Controller + host:** two Android devices (or two emulators with network
+  setup), Android 7.1+.
+- **Signaling server:** Node.js ≥ 18, reachable by both devices (`wss://` in
+  production).
+- **TURN (cross-network):** coturn on a host with a public IP (see
+  `infra/README.md`). Two phones on different networks almost always need it
+  (carrier CGNAT blocks P2P).
+
+---
+
+## Quick start
+
+### 1. Run the signaling server
+
+```bash
+cd server
+npm ci
+npm run smoke      # 12+ protocol checks, no Android needed
+npm start          # ws://0.0.0.0:8080
+```
+
+Configure via environment (`server/.env.example`). FCM is optional and off by
+default; attended sessions need no wake.
+
+### 2. Build the Android app
+
+```bash
+cd android
+./gradlew :app:assembleDebug
+```
+
+Debug builds connect to `ws://10.0.2.2:8080` (emulator → host loopback). For
+two real devices, point `SIGNALING_URL` (in `app/build.gradle.kts`) at your
+machine's LAN IP or a deployed `wss://` URL.
+
+### 3. Pair and connect
+
+1. **Host:** tap **Share my screen** → approve the consent dialog and the
+   Android screen-capture dialog. A 6-digit code (+ QR) appears.
+2. **Controller:** tap **Connect**, enter the code (or scan the QR).
+3. The host approves; the controller sees the live screen and can tap, swipe,
+   long-press, press Back/Home/Recents, and type text.
+4. Either side taps **End session**; the notification clears and the
+   connection closes.
+
+For **unattended access**, set up a standing grant on the host for a paired
+device (requires pairing first). See `docs/ARCHITECTURE.md`.
+
+---
+
+## How a session flows
+
+```
+Host taps "Share my screen" ──host-open──► server ──► 6-digit code shown
+Controller enters code ──join──► server ──join-request──► Host
+Host: consent dialog → MediaProjection dialog → ScreenCaptureService (FGS)
+Host ──offer(+signed fingerprint)──► server ──► Controller ──answer──► Host
+      ICE via STUN/coturn ──► P2P (or relayed)
+Controller sees screen; gestures/keys ──DataChannel──► Host AccessibilityService
+Either side ends ──► hangup, PeerConnection closes, FGS stops
+```
+
+Bidirectional: both roles ship in one APK; whichever device runs **Share my
+screen** is the controlled one for that session.
 
 ---
 
 ## Repository layout
 
 ```
-techee/
-├── server/                     # Node.js signaling + pairing broker + FCM wake  (RUNNABLE)
-│   ├── src/
-│   │   ├── server.js           #   WebSocket message router (all protocol handlers)
-│   │   ├── state.js            #   in-memory devices/sessions/grants/pairings
-│   │   ├── turn.js             #   time-limited TURN credential generation
-│   │   ├── fcm.js              #   high-priority data-only wake push (optional)
-│   │   └── config.js           #   env-driven config
-│   ├── test/smoke.js           #   end-to-end protocol test (no Android needed)
-│   └── package.json
+├── android/                  # Kotlin / Jetpack Compose app
+│   └── app/src/main/java/com/remot/app/
+│       ├── RemoteApp.kt          # Application: init + FCM token
+│       ├── ServiceLocator.kt     # manual DI + signaling listener fan-out
+│       ├── MainActivity.kt       # Compose host + permission launchers
+│       ├── MainViewModel.kt      # UI state + intents
+│       ├── crypto/ identity/ trust/ unattended/
+│       ├── signaling/ webrtc/ session/
+│       ├── host/ fcm/            # capture, input, wake services
+│       └── ui/                   # Compose screens
+├── server/                   # Node.js signaling + pairing broker + FCM wake
+│   ├── src/server.js         # WebSocket message router + health + rate limits
+│   ├── src/state.js          # in-memory broker state
+│   ├── src/turn.js           # time-limited TURN credentials
+│   ├── src/fcm.js            # optional Firebase wake
+│   └── test/smoke.js         # end-to-end protocol test (no Android needed)
 ├── infra/
-│   └── turnserver.conf         # coturn config (STUN/TURN)
-├── android/                    # Android app (Gradle / Kotlin / Compose)
-│   ├── settings.gradle.kts
-│   ├── build.gradle.kts
-│   ├── gradle.properties
-│   └── app/
-│       ├── build.gradle.kts
-│       ├── proguard-rules.pro
-│       └── src/main/
-│           ├── AndroidManifest.xml
-│           ├── res/…           # icon, notification drawables, accessibility config
-│           └── java/com/remoteassist/
-│               ├── RemoteApp.kt              # Application: init + FCM token
-│               ├── ServiceLocator.kt         # manual DI + signaling Listener fan-out
-│               ├── MainActivity.kt           # Compose host + permission launchers
-│               ├── MainViewModel.kt          # UI state + intents
-│               ├── crypto/Crypto.kt          # P-256 sign/verify, ECDH, safety number
-│               ├── identity/DeviceIdentity.kt# hardware-backed device keypair
-│               ├── trust/                    # TrustStore + PairingManager
-│               ├── unattended/GrantStore.kt  # standing unattended grants
-│               ├── signaling/SignalingClient.kt   # OkHttp WS + auto-reconnect
-│               ├── webrtc/                   # WebRtcCore + RtcSession (ICE restart)
-│               ├── session/SessionManager.kt # owns the active session, both roles
-│               ├── host/                     # capture, input, unattended, wake services
-│               ├── fcm/RemoteFcmService.kt   # wake receiver + coordinator
-│               └── ui/                       # Compose screens + theme
-├── play_console_declarations.md   # store-submission declaration text
-├── play_console_reviewer_notes.md # reviewer notes + test-credentials template
-├── remoteassist_demo_captions.srt # demo-video captions
-└── remoteassist_demo_transcript.txt
+│   ├── turnserver.conf       # coturn config (STUN/TURN)
+│   └── README.md             # deployment: server, coturn, firewall, TLS
+├── docs/                     # AUDIT, ARCHITECTURE, SECURITY, COMPATIBILITY,
+│                             # REMOTE_PROTOCOL, DEVELOPMENT
+└── CHANGELOG.md
 ```
 
----
+## Documentation
 
-## 1. Run the signaling server (works now)
+| Document | Contents |
+| --- | --- |
+| `docs/AUDIT.md` | Technical audit of the source project + capability matrix |
+| `docs/ARCHITECTURE.md` | System, Android, server, transport, data flow |
+| `docs/SECURITY.md` | Security model, threats, mitigations |
+| `docs/ANDROID_COMPATIBILITY.md` | Android 7.1–16 support + platform limitations |
+| `docs/REMOTE_PROTOCOL.md` | Signaling + control protocol reference |
+| `docs/DEVELOPMENT.md` | Build, test, release, CI workflow |
+| `infra/README.md` | Signaling + TURN deployment, firewall, TLS |
 
-```bash
-cd server
-npm install
-npm run smoke      # 12/12 protocol checks, no external services
-npm start          # listens on ws://0.0.0.0:8080
-```
+## Security model (summary)
 
-Configuration is via environment (see `server/.env.example`). On Node 20+ you can load it
-with `node --env-file=.env src/server.js`. FCM is optional and disabled by default; the
-server runs fully without it (attended sessions need no wake).
+- **Identity:** per-install P-256 keypair in Android Keystore; the public key
+  IS the device ID.
+- **Signed registration:** the signaling server only registers a device after
+  verifying `deviceId == SHA-256(pubkey)` and a signature over a fresh
+  challenge — identity hijacking is not possible.
+- **Pairing:** authenticated ECDH + mutual identity proofs + an out-of-band
+  safety number users compare.
+- **Media:** DTLS-SRTP end to end; peers sign their DTLS fingerprints with
+  their identity keys, so a compromised signaling server cannot MITM a paired
+  session.
+- **Sessions:** one-time 6-digit codes (5 min TTL) + explicit host consent;
+  paired dials require an existing trusted pairing.
+- **Unattended grants:** scoped, expiring, revocable, referencing a paired
+  identity only.
+- No secrets in the repo; `.env` git-ignored. Full model: `docs/SECURITY.md`.
 
-### What the server does
-- Registers devices by their **public-key id**.
-- Brokers **code-based** joins (`host-open` → 6-digit code → `join`) and **paired-direct**
-  joins (dial a trusted host by id; requires an existing pairing).
-- Relays the WebRTC handshake (`offer`/`answer`/`ice`/`restart`) and pairing/auth messages.
-- Issues **time-limited TURN credentials** to clients (HMAC of expiry against the coturn
-  shared secret).
-- On a join to an **offline** host, sends an **FCM high-priority data-only wake** and
-  queues the request until the host reconnects.
-- Never sees media — only connection-setup metadata.
+## Known Android limitations
 
----
+- Unattended access on Android 11+ is limited by single-use MediaProjection
+  intents (documented in `docs/ANDROID_COMPATIBILITY.md`).
+- Secure screens (DRM, some banking apps) cannot be captured by MediaProjection.
+- Multi-touch and device audio are not implemented in v1.0.0.
+- Device wake requires a Firebase project (FCM); attended sessions work
+  without it.
 
-## 2. Deploy coturn (for cross-network sessions)
+## License
 
-Two phones "in different locations" almost always need TURN (carrier CGNAT blocks P2P).
-
-```bash
-# On a host with a public IP:
-sudo apt install coturn
-sudo cp infra/turnserver.conf /etc/turnserver.conf
-# edit external-ip, realm, static-auth-secret (must equal server's TURN_SECRET),
-# and TLS cert paths (certbot)
-sudo turnserver -c /etc/turnserver.conf -v
-```
-
-Open UDP/TCP **3478**, **5349**, and UDP **49152–65535**. Verify with the WebRTC
-`trickle-ice` test page before wiring the app.
-
----
-
-## 3. Build the Android app (needs Android SDK)
-
-Open `android/` in **Android Studio** (Koala or newer), or from the CLI:
-
-```bash
-cd android
-# Android Studio generates the Gradle wrapper on first open; from CLI, once:
-gradle wrapper --gradle-version 8.9
-./gradlew :app:assembleDebug
-```
-
-Prerequisites: Android SDK (API 35), JDK 17. Point the app at your server via
-`SIGNALING_URL` in `app/build.gradle.kts` (defaults to `ws://10.0.2.2:8080` — the
-emulator's route to host loopback). For two real devices, use your machine's LAN IP or a
-deployed `wss://` URL.
-
-For **FCM wake**, add a `google-services.json` to `app/`, uncomment the
-`com.google.gms.google-services` plugin lines in the two Gradle files, and set
-`FCM_ENABLED=true` + credentials on the server. Without it, the app still builds and runs;
-only device-wake for offline hosts is inert.
-
----
-
-## 4. How a session flows
-
-```
-Host taps "Share my screen" ──host-open──► server ──► 6-digit code shown
-Controller enters code ──join──► server ──join-request──► Host
-Host: ConsentDialog (Allow) ──► MediaProjection system dialog (Start now)
-      ScreenCaptureService (FGS + persistent notification) builds screen track
-Host ──offer(+fingerprint sig)──► server ──► Controller ──answer──► Host
-      ICE via STUN/coturn ──► P2P or relayed
-Controller sees screen; taps/swipes ──DataChannel──► Host AccessibilityService
-Either side ends ──► notification clears, PeerConnection closes
-```
-
-Bidirectional: the app ships **both roles**; whichever device runs `host-open` is the
-controlled one for that session. A→B and B→A can run as two independent sessions.
-
----
-
-## 5. Security model (implemented)
-
-- **Device identity**: hardware-backed P-256 keypair in Android Keystore
-  (`DeviceIdentity`). Public key = stable identity id.
-- **Pairing**: authenticated ECDH (`PairingManager`) → shared secret + mutual identity
-  proofs + an out-of-band **safety number** users compare. Trust persisted encrypted
-  (`TrustStore` on EncryptedSharedPreferences).
-- **Per-session auth**: dialer signs a fresh challenge; only a **trusted** identity is
-  accepted.
-- **MITM-proof media**: each peer signs its **DTLS fingerprint** with its identity key;
-  the other verifies against the paired public key (`RtcSession.signFingerprint` /
-  `verifyRemoteSdp`). A compromised signaling server cannot insert itself.
-- **Unattended access**: owner-configured, scoped, expiring, revocable grants
-  (`GrantStore`), referencing a **paired identity** — never a raw id.
-- **Transport**: WebRTC DTLS-SRTP end-to-end; signaling over TLS/WSS in production.
-
----
-
-## 6. Reconnection / ICE restart (implemented)
-
-`RtcSession` arms recovery the instant the first connection succeeds:
-- Registers a default-network callback → ICE restart on Wi-Fi↔cellular switch.
-- On `DISCONNECTED` (2s grace) / `FAILED` (immediate): reconnect signaling if needed,
-  refresh TURN creds, `createOffer(IceRestart=true)` reusing the same PeerConnection
-  (video track + data channel survive — no black screen, no re-consent).
-- Exponential backoff, capped at 15s, 6 attempts, then `CLOSED` → UI offers manual retry.
-
----
-
-## 7. What needs a real device (not runnable on this host)
-
-These are implemented but only exercisable on hardware with the SDK:
-
-- **Screen capture** (`MediaProjection`) and **input injection** (`AccessibilityService`).
-- **WebRTC** peer connection / TURN traversal (needs two networked devices).
-- **FCM wake** (needs `google-services.json` + Firebase project).
-- **Remote video rendering**: `MainViewModel.remoteVideo` exposes the received
-  `VideoTrack`; wire it to a `SurfaceViewRenderer` inside an `AndroidView` in
-  `SessionScreen`, then map renderer touches to normalized taps via `vm.sendTap()`.
-  (Left as a documented integration point — the plumbing on both sides is complete.)
-
-### Unattended access limitations (platform, not code)
-On Android 11+ a MediaProjection permission Intent is effectively single-use, and Android
-14+ tightens re-acquisition. `UnattendedHostService` stores the grant Intent for the
-scaffold; a production unattended build must **keep the capturer/track alive** across
-sessions rather than rebuilding from a stored Intent. This is the honest platform ceiling
-described in the design docs, not a bug in the wiring.
-
----
-
-## 8. Play Store submission
-
-The `play_console_*` files and the demo `.srt` / transcript are the ready-to-paste
-compliance package (Accessibility + foreground-service declarations, Data Safety answers,
-privacy policy, reviewer notes, demo-video captions). This app category (AccessibilityService
-+ remote control + unattended access) faces heavy review — read
-`play_console_declarations.md` before submitting.
-
----
-
-## 9. Status summary
-
-| Component | State |
-|---|---|
-| Signaling server + protocol | ✅ Implemented, tested (`npm run smoke`) |
-| TURN config | ✅ Provided |
-| Android project (Gradle/manifest/res) | ✅ Complete |
-| Crypto / identity / pairing / trust | ✅ Implemented |
-| Signaling client + reconnect | ✅ Implemented |
-| WebRTC session + ICE restart + fingerprint auth | ✅ Implemented |
-| Host services (capture / input / unattended / wake) | ✅ Implemented |
-| FCM wake | ✅ Implemented (needs Firebase project to activate) |
-| Compose UI (home / code / join / consent / paired / safety / session) | ✅ Implemented |
-| QR scanner for pairing | ⛏ Stub button — add a scanner (e.g. CameraX + ML Kit) |
-| Remote video render surface | ⛏ Documented integration point |
-| Compiled APK | ✅ Builds — `:app:assembleDebug` → `app/build/outputs/apk/debug/app-debug.apk` (JDK 17+, SDK API 35) |
-```
+MIT — see [LICENSE](LICENSE).

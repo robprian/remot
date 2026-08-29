@@ -1,11 +1,11 @@
-RemoteAssist — Remote Support & Access
+Remot — Remote Support & Access
 Demo video transcript (for Play review)
 
 LEFT = HOST (the controlled device)   RIGHT = CONTROLLER (the controlling device)
 
 ---
 
-RemoteAssist is a remote-support and remote-access tool. This demo shows the consent-first setup and how remote control works.
+Remot is a remote-support and remote-access tool. This demo shows the consent-first setup and how remote control works.
 
 The app icon is always visible in the launcher. It can never be hidden.
 
@@ -31,4 +31,4 @@ Paired devices and access can be revoked at any time.
 
 Unattended access is set up by the device owner, behind authentication. It is only available for a previously paired device, and it shows its own always-on notification.
 
-RemoteAssist requires consent on the controlled device, is always visible, and is revocable anytime. It is never hidden.
+Remot requires consent on the controlled device, is always visible, and is revocable anytime. It is never hidden.

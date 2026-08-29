@@ -1,10 +1,13 @@
 # Local Gradle distribution (machine-specific; wrapper points here as a network workaround)
 .gradle-dist/
 
-# Node
-server/node_modules/
+# Environment (secrets — never commit)
+.env
 server/.env
 npm-debug.log*
+
+# Node
+server/node_modules/
 
 # Android / Gradle
 android/.gradle/
@@ -22,3 +25,4 @@ android/app/google-services.json
 # Keystores
 *.jks
 *.keystore
+android/app/release.keystore
