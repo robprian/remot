@@ -5,22 +5,44 @@ plugins {
     // id("com.google.gms.google-services") // enable with google-services.json
 }
 
+// Overridable build configuration (never store secrets here).
+//   Local/CI in production pass -PSIGNALING_URL=... (or set the env below).
+//   Signing secrets come ONLY from Gradle properties/env supplied outside the repo
+//   (GitHub Secrets -> workflow env, or local $HOME/.gradle/gradle.properties).
+val signingKeystorePath   = providers.gradleProperty("RELEASE_KEYSTORE_PATH").orElse(systemPropertyOrEnv("RELEASE_KEYSTORE_PATH"))
+val signingKeystorePass   = providers.gradleProperty("RELEASE_KEYSTORE_PASSWORD").orElse(systemPropertyOrEnv("RELEASE_KEYSTORE_PASSWORD"))
+val signingKeyAlias       = providers.gradleProperty("RELEASE_KEY_ALIAS").orElse(systemPropertyOrEnv("RELEASE_KEY_ALIAS"))
+val signingKeyPass        = providers.gradleProperty("RELEASE_KEY_PASSWORD").orElse(systemPropertyOrEnv("RELEASE_KEY_PASSWORD"))
+val signalingUrl          = providers.gradleProperty("SIGNALING_URL").orElse(systemPropertyOrEnv("SIGNALING_URL"))
+
+// Returns a Provider with the value of a system property OR an env var of the same
+// name (System.getenv wins for CI env injection; -D and system props work locally).
+fun systemPropertyOrEnv(name: String): String {
+    return System.getenv(name) ?: (System.getProperty(name) ?: "")
+}
+
 android {
-    namespace = "com.remot.app"
+    namespace = "com.robrion.remot"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.remot.app"
+        applicationId = "com.robrion.remot"
         minSdk = 25
         targetSdk = 35
         // V/C/P production versioning (see docs/VERSIONING.md):
-        // versionCode = V*100000 + C*100 + P  →  V1C001 = 100100
-        versionCode = 100100
-        versionName = "V1C001"
+        // versionCode = V*100000 + C*100 + P  →  V2C001 = 200100
+        versionCode = 200100
+        versionName = "V2C001"
 
-        // Point the app at your signaling server. Override per build type as needed.
-        // Production signaling endpoint (ws until TLS is configured; see infra/README.md).
-        buildConfigField("String", "SIGNALING_URL", "\"ws://43.156.82.52:8080\"")
+        // Signaling endpoint, overridable at build time. On CI it is supplied via
+        // the SIGNALING_URL secret; locally it defaults to a build-time property.
+        // No TURN endpoint or secret is ever compiled into the APK — STUN/TURN
+        // credentials are fetched at runtime from the signaling server.
+        buildConfigField(
+            "String",
+            "SIGNALING_URL",
+            "\"" + (signalingUrl.getOrElse("ws://SIGNALING_URL_OVERRIDE_ME:8080")) + "\""
+        )
     }
 
     buildFeatures {
@@ -28,39 +50,58 @@ android {
         buildConfig = true
     }
 
+    // Single installable universal release APK: no ABI splits / filters are
+    // configured, so AGP emits one `app-release.apk` (never split_config.*).
+    // See buildTypes.release + the Build workflow which validates this.
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
 
-    // Optional release signing, driven by Gradle properties (see CI workflow):
-    //   -PkeystorePath=… -PkeystorePassword=… -PkeyAlias=… -PkeyPassword=…
-    // Without them the release APK builds unsigned. Keystores are never committed.
+    // Persistent production signing. Requires ALL four values via Gradle property
+    // or env (set from GitHub Secrets in CI, or gradle.properties locally). If any
+    // are missing the release build FAILS — we never silently sign with the debug
+    // key or emit an unsigned production APK.
     signingConfigs {
         create("release") {
-            val path = providers.gradleProperty("keystorePath").orNull
-            if (path != null) {
-                storeFile = file(path)
-                storePassword = providers.gradleProperty("keystorePassword").get()
-                keyAlias = providers.gradleProperty("keyAlias").get()
-                keyPassword = providers.gradleProperty("keyPassword").get()
-            }
+            storeFile = signingKeystorePath.getOrNull()?.let { file(it) }
+            storePassword = signingKeystorePass.getOrNull()
+            keyAlias = signingKeyAlias.getOrNull()
+            keyPassword = signingKeyPass.getOrNull()
         }
     }
 
     buildTypes {
         debug {
-            // Production signaling endpoint (emulator override: use ws://10.0.2.2:8080 for a local broker)
-            buildConfigField("String", "SIGNALING_URL", "\"ws://43.156.82.52:8080\"")
+            // Local dev: emulator -> host loopback (override in gradle.properties if needed).
+            buildConfigField(
+                "String",
+                "SIGNALING_URL",
+                "\"" + (signalingUrl.getOrElse("ws://10.0.2.2:8080")) + "\""
+            )
         }
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // wss:// preferred once TLS + a signaling domain are configured
-            buildConfigField("String", "SIGNALING_URL", "\"ws://43.156.82.52:8080\"")
-            val releaseSigning = signingConfigs.getByName("release")
-            if (releaseSigning.storeFile != null) signingConfig = releaseSigning
+
+            // Only enforce signing when the release APK is actually being assembled,
+            // so debug/test/lint tasks still work locally without signing credentials.
+            if (gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }) {
+                val required = listOfNotNull(
+                    signingKeystorePath.getOrNull(),
+                    signingKeystorePass.getOrNull(),
+                    signingKeyAlias.getOrNull(),
+                    signingKeyPass.getOrNull()
+                )
+                require(required.size == 4) {
+                    "Release signing requires RELEASE_KEYSTORE_PATH, RELEASE_KEYSTORE_PASSWORD, " +
+                        "RELEASE_KEY_ALIAS and RELEASE_KEY_PASSWORD (Gradle property or env). " +
+                        "Refusing to build an unsigned/debug-signed production APK."
+                }
+            }
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 }
