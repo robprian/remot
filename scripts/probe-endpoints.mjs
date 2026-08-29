@@ -207,6 +207,47 @@ function stun(host, port, timeoutMs = 4000) {
   });
 }
 
+/**
+ * Unauthenticated TURN Allocate: sends a valid Allocate request and expects the
+ * server to answer with a 401 challenge (realm + nonce). That proves the TURN
+ * relay is reachable AND responds to allocation requests, without needing
+ * credentials (a full authenticated Allocate requires signaling-issued creds).
+ * REQUESTED-TRANSPORT: protocol byte first (RFC 5766 §14.4) — the value is
+ * `0x11 0x00 0x00 0x00` (UDP=17, then 3 reserved bytes).
+ */
+function turnAllocateChallenge(host, port, timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    const s = dgram.createSocket('udp4');
+    const txn = crypto.randomBytes(12);
+    const rtp = Buffer.alloc(4);
+    rtp[0] = 17;
+    const attrBody = Buffer.alloc(8);
+    attrBody.writeUInt16BE(0x0019, 0);   // REQUESTED-TRANSPORT
+    attrBody.writeUInt16BE(4, 2);
+    rtp.copy(attrBody, 4);
+    const msg = Buffer.alloc(20 + attrBody.length);
+    msg.writeUInt16BE(0x0003, 0);        // Allocate request
+    msg.writeUInt16BE(attrBody.length, 2);
+    msg.writeUInt32BE(0x2112a442, 4);
+    txn.copy(msg, 8);
+    attrBody.copy(msg, 20);
+    const t0 = Date.now();
+    const timer = setTimeout(() => {
+      try { s.close(); } catch { /* noop */ }
+      resolve({ ok: false, err: 'timeout' });
+    }, timeoutMs);
+    s.on('message', (data) => {
+      const typ = data.readUInt16BE(0);
+      clearTimeout(timer);
+      try { s.close(); } catch { /* noop */ }
+      if (typ === 0x0113) resolve({ ok: true, rttMs: Date.now() - t0 }); // 401 challenge
+      else resolve({ ok: false, err: `unexpected type 0x${typ.toString(16)}` });
+    });
+    s.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, err: e.code || e.message }); });
+    s.send(msg, port, host);
+  });
+}
+
 async function main() {
   const url = parseUrl(SERVER_URL);
   const host = (url && url.host) || SERVER_IP || '';
@@ -246,6 +287,10 @@ async function main() {
   const st = await stun(ip, STUN_PORT);
   if (st.ok) ok('STUN UDP :3478', `${st.rttMs}ms`);
   else fail('STUN UDP :3478', st.err || (st.type !== undefined ? `type 0x${st.type.toString(16)}` : 'no reply'));
+
+  const ta = await turnAllocateChallenge(ip, STUN_PORT);
+  if (ta.ok) ok('TURN Allocate :3478', `401 challenge in ${ta.rttMs}ms`);
+  else fail('TURN Allocate :3478', ta.err || 'no reply');
 
   const tt = await tcp(ip, TURN_TLS_PORT);
   if (tt.open) ok('TURN TCP :5349');

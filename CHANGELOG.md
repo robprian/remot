@@ -12,6 +12,47 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C004P02 — 2026-08-29
+
+### Summary
+
+Verification + CI patch: the cloud security group is now open and the full
+signaling → STUN → TURN path is proven reachable from the public internet,
+and the external probe now also performs a real TURN Allocate check so every
+build verifies the relay endpoint from GitHub's network. No app logic changed;
+this release exists so installed devices get a fresh versionCode and a
+verifiably current APK.
+
+### Changed
+
+- Bumped production version to **V2C004P02** (versionCode 200402).
+
+### Verified (server, after the firewall was opened)
+
+- **STUN via public IP:** real Binding round-trip `43.156.82.52:3478` → OK
+  (1–2 ms) and `turn.robrion.net:3478` → OK (9 ms); before the security-group
+  change this timed out from the same vantage point.
+- **TURN Allocate:** full authenticated Allocate (401 realm/nonce challenge →
+  HMAC-SHA1 response with the short-lived credentials the signaling server
+  issues) succeeds against the production coturn via both the hostname and the
+  direct public IP. coturn `static-auth-secret` matches the server `TURN_SECRET`
+  (verified by hash), realm and relay range (49152–65535) are correct.
+- **Signaling:** still reachable from GitHub's public network (TCP, HTTP
+  /healthz, WS 101, register round-trip) — unchanged.
+- Note: TURNS TCP 5349 remains closed (no TLS cert) and is no longer
+  advertised by the server; UDP relay media additionally needs the 49152–65535
+  UDP range open in the security group for actual relayed sessions (the app's
+  health check passes on the Allocate itself).
+
+### Added
+
+- `scripts/probe-endpoints.mjs` now also sends a real (unauthenticated) TURN
+  Allocate and expects the 401 challenge — so the CI `network-probe` job
+  verifies the TURN relay endpoint, not just STUN, from GitHub's network on
+  every build. REQUESTED-TRANSPORT is encoded per RFC 5766 (protocol byte
+  first); this matches the app's `StunTurnProbe` implementation.
+
+---
 ## V2C004P01 — 2026-08-29
 
 ### Summary
