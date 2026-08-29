@@ -1,37 +1,65 @@
 package com.robrion.remot.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.robrion.remot.BuildConfig
 import com.robrion.remot.MainViewModel
 import com.robrion.remot.Screen
+import com.robrion.remot.network.EndpointState
+import com.robrion.remot.network.NetworkHealth
+import com.robrion.remot.services.ServiceState
+import com.robrion.remot.services.ServiceStatus
+import com.robrion.remot.ui.components.NetworkHealthCard
+import com.robrion.remot.ui.components.ServiceCard
+import com.robrion.remot.ui.components.SectionHeading
+import com.robrion.remot.ui.components.StatusIndicator
+import com.robrion.remot.ui.components.StatusTone
+import com.robrion.remot.ui.components.statusColor
 import com.robrion.remot.webrtc.LinkState
+import android.os.Build
 
 /**
- * Single-activity Compose root. Renders the current [Screen] and overlays the
- * consent dialog whenever an incoming controller is awaiting host approval.
+ * Single-activity Compose root. Renders the current [Screen] inside a
+ * system-inset-aware container and overlays the consent dialog whenever an
+ * incoming controller is awaiting host approval.
+ *
+ * Insets: the app runs edge-to-edge (Android 15/16 enforce this), so the root
+ * applies WindowInsets.safeDrawing — content is never hidden under the status
+ * bar, display cutout, or gesture/navigation bar.
  */
 @Composable
 fun AppRoot(
@@ -39,20 +67,29 @@ fun AppRoot(
     onRequestNotifications: () -> Unit,
     onAllowIncoming: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
 ) {
     Surface(Modifier.fillMaxSize()) {
-        when (vm.screen) {
-            Screen.HOME -> HomeScreen(vm, onRequestNotifications, onOpenAccessibilitySettings)
-            Screen.HOST_CODE -> HostCodeScreen(vm)
-            Screen.JOIN -> JoinScreen(vm)
-            Screen.SCAN -> QrScannerScreen(
-                onCode = { raw -> vm.onScanned(raw) },
-                onManual = { vm.goJoin() },
-                onCancel = { vm.goJoin() },
-            )
-            Screen.PAIRED -> PairedDevicesScreen(vm)
-            Screen.SAFETY_NUMBER -> SafetyNumberScreen(vm)
-            Screen.SESSION -> SessionScreen(vm)
+        // safeDrawing = status bar + display cutout (top) and nav bar (bottom).
+        Box(
+            Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+        ) {
+            when (vm.screen) {
+                Screen.HOME -> HomeScreen(vm, onRequestNotifications, onOpenAccessibilitySettings, onOpenNotificationSettings)
+                Screen.HOST_CODE -> HostCodeScreen(vm)
+                Screen.JOIN -> JoinScreen(vm)
+                Screen.SCAN -> QrScannerScreen(
+                    onCode = { raw -> vm.onScanned(raw) },
+                    onManual = { vm.goJoin() },
+                    onCancel = { vm.goJoin() },
+                )
+                Screen.PAIRED -> PairedDevicesScreen(vm)
+                Screen.SAFETY_NUMBER -> SafetyNumberScreen(vm)
+                Screen.SESSION -> SessionScreen(vm)
+                Screen.SERVICES -> ServicesScreen(vm, onOpenAccessibilitySettings, onOpenNotificationSettings)
+            }
         }
     }
 
@@ -67,90 +104,306 @@ fun AppRoot(
     }
 }
 
+// ---------------------------------------------------------------------------
+// HOME — the dashboard
+// ---------------------------------------------------------------------------
+
 @Composable
 private fun HomeScreen(
     vm: MainViewModel,
     onRequestNotifications: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
 ) {
     Column(
-        Modifier.fillMaxSize().padding(24.dp),
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // Header — clearly separated from the status bar by safeDrawing insets.
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Remot", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Text("Secure Android-to-Android remote control", style = MaterialTheme.typography.bodyMedium)
-            }
-        }
-
-        // This device's identity.
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp)) {
-                Text("This device", style = MaterialTheme.typography.titleSmall)
-                Spacer(Modifier.height(4.dp))
+                Text("Remot", style = MaterialTheme.typography.headlineMedium)
                 Text(
-                    vm.deviceFingerprint,
+                    "Secure Android-to-Android remote control",
                     style = MaterialTheme.typography.bodyMedium,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                )
-                Text(
-                    "Other devices see this as your device ID.",
-                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        }
-
-        ElevatedCard(Modifier.fillMaxWidth().clickable { vm.becomeHost() }) {
-            Column(Modifier.padding(20.dp)) {
-                Text("Share my screen", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Generate a code so another device can view & control this phone",
-                    style = MaterialTheme.typography.bodyMedium
-                )
+            // Diagnostics shortcut (small, quiet).
+            IconButton(onClick = { vm.goServices() }) {
+                Icon(Icons.Default.Speed, contentDescription = "System services & diagnostics",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
 
-        ElevatedCard(Modifier.fillMaxWidth().clickable { vm.goJoin() }) {
-            Column(Modifier.padding(20.dp)) {
-                Text("Connect to a device", style = MaterialTheme.typography.titleMedium)
-                Text("Enter a 6-digit code to control another phone", style = MaterialTheme.typography.bodyMedium)
+        // Infrastructure health — real STUN/TURN checks, not faked.
+        NetworkHealthCard(health = vm.networkHealth, onRefresh = { vm.refreshNetworkHealth() })
+
+        // Remote session state (distinct from infrastructure!).
+        SessionStateRow(vm)
+
+        // Primary actions.
+        ElevatedCard(
+            Modifier.fillMaxWidth().clickable { vm.becomeHost() },
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.TouchApp, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                Spacer(Modifier.width(16.dp))
+                Column {
+                    Text("Share my screen", style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Text("Generate a code so another device can view & control this phone",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
             }
         }
 
-        OutlinedButton(onClick = { vm.goPaired() }) { Text("Paired devices") }
+        ElevatedCard(
+            Modifier.fillMaxWidth().clickable { vm.goJoin() },
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
+            Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.QrCode2, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(16.dp))
+                Column {
+                    Text("Connect to a device", style = MaterialTheme.typography.titleMedium)
+                    Text("Enter a 6-digit code to control another phone",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
 
-        Spacer(Modifier.height(8.dp))
+        // Secondary actions.
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedButton(onClick = { vm.goPaired() }, modifier = Modifier.weight(1f)) {
+                Text("Paired devices")
+            }
+        }
+
+        // Services status (accessibility + notifications).
+        SectionHeading("Services")
         SetupStatusRow(
-            accessibilityEnabled = vm.accessibilityEnabled,
+            accessibilityState = vm.accessibilityState,
+            notificationState = vm.notificationState,
             onEnableAccessibility = onOpenAccessibilitySettings,
+            onEnableNotifications = onOpenNotificationSettings,
             onRequestNotifications = onRequestNotifications,
         )
     }
 }
 
 @Composable
-private fun SetupStatusRow(
-    accessibilityEnabled: Boolean,
-    onEnableAccessibility: () -> Unit,
-    onRequestNotifications: () -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Setup", style = MaterialTheme.typography.titleSmall)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (accessibilityEnabled) "✓ Accessibility enabled" else "• Accessibility required for control",
-                Modifier.weight(1f), style = MaterialTheme.typography.bodySmall
-            )
-            if (!accessibilityEnabled) TextButton(onClick = onEnableAccessibility) { Text("Enable") }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("• Notifications", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = onRequestNotifications) { Text("Allow") }
+private fun SessionStateRow(vm: MainViewModel) {
+    val (text, color) = when (vm.linkState) {
+        LinkState.CONNECTING -> "Connecting…" to statusColor(StatusTone.NEUTRAL)
+        LinkState.CONNECTED -> "Connected" to statusColor(StatusTone.SUCCESS)
+        LinkState.RECOVERING -> "Reconnecting…" to statusColor(StatusTone.WARNING)
+        LinkState.CLOSED -> "No device connected" to statusColor(StatusTone.NEUTRAL)
+    }
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Remote session", style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+            Text(text, style = MaterialTheme.typography.labelLarge, color = color)
         }
     }
 }
+
+@Composable
+private fun SetupStatusRow(
+    accessibilityState: ServiceState,
+    notificationState: ServiceState,
+    onEnableAccessibility: () -> Unit,
+    onEnableNotifications: () -> Unit,
+    onRequestNotifications: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ServiceCard(
+            title = "Accessibility",
+            subtitle = "Required for remote touch & text input",
+            state = accessibilityState,
+            icon = Icons.Default.TouchApp,
+            onManage = onEnableAccessibility,
+        )
+        ServiceCard(
+            title = "Notification Access",
+            subtitle = "Lets Remot surface notifications during a session",
+            state = notificationState,
+            icon = Icons.Default.Notifications,
+            onManage = onEnableNotifications,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SERVICES — accessibility + notification listener + diagnostics
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun ServicesScreen(
+    vm: MainViewModel,
+    onOpenAccessibilitySettings: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { vm.goHome() }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+            Text("System services", style = MaterialTheme.typography.headlineSmall)
+        }
+
+        // Accessibility
+        ServiceCard(
+            title = "Accessibility",
+            subtitle = if (vm.accessibilityState == ServiceState.CONNECTED)
+                "Remote gesture control ready" else "Remote control needs this permission",
+            state = vm.accessibilityState,
+            icon = Icons.Default.TouchApp,
+            onManage = onOpenAccessibilitySettings,
+        )
+        when (vm.accessibilityState) {
+            ServiceState.INSTALLED -> HelpNote(
+                "Remot Control Service is installed but not enabled. Open Accessibility " +
+                    "Settings and enable “Remot Control Service”."
+            )
+            ServiceState.ENABLED -> HelpNote("Enabled — waiting for the system to connect the service.")
+            else -> {}
+        }
+
+        // Notification listener
+        ServiceCard(
+            title = "Notification Access",
+            subtitle = "Shows host notifications to an active session",
+            state = vm.notificationState,
+            icon = Icons.Default.Notifications,
+            onManage = onOpenNotificationSettings,
+        )
+        when (vm.notificationState) {
+            ServiceState.INSTALLED -> HelpNote(
+                "Remot Notifications is installed but access is not granted. Open " +
+                    "Notification Access settings and enable Remot."
+            )
+            else -> {}
+        }
+
+        // Diagnostics
+        SectionHeading("Diagnostics")
+        DiagnosticsCard(vm)
+
+        // Device / app info
+        SectionHeading("Device")
+        InfoCard(vm)
+    }
+}
+
+@Composable
+private fun HelpNote(text: String) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(12.dp)
+        )
+    }
+}
+
+@Composable
+private fun DiagnosticsCard(vm: MainViewModel) {
+    val h = vm.networkHealth
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            StatusIndicator("Internet", h.internet)
+            StatusIndicator("Signaling", h.signaling)
+            StatusIndicator("STUN", h.stun)
+            StatusIndicator("TURN", h.turn)
+            h.turnHost?.let {
+                Row {
+                    Text("TURN host", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text(it, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            h.latencyMs?.let {
+                Row {
+                    Text("Latency", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text("$it ms", style = MaterialTheme.typography.labelLarge)
+                }
+            }
+            // ICE route of an active session (host / srflx / relay).
+            vm.iceRoute?.let {
+                Row {
+                    Text("ICE route", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Text(routeLabel(it), style = MaterialTheme.typography.labelLarge,
+                        color = if (it == "relay") statusColor(StatusTone.WARNING) else statusColor(StatusTone.SUCCESS))
+                }
+            }
+        }
+    }
+}
+
+private fun routeLabel(route: String): String = when (route) {
+    "relay" -> "TURN Relay"
+    "srflx" -> "STUN (server-reflexive)"
+    "host" -> "Direct (LAN)"
+    else -> route
+}
+
+@Composable
+private fun InfoCard(vm: MainViewModel) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            InfoRow("Android", "${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
+            InfoRow("Device", "${Build.MANUFACTURER} ${Build.MODEL}")
+            InfoRow("App version", BuildConfig.VERSION_NAME)
+            InfoRow("Device ID", vm.deviceFingerprint)
+        }
+    }
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row {
+        Text(label, style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HOST CODE / JOIN / PAIRED / SAFETY NUMBER — restyled consistently
+// ---------------------------------------------------------------------------
 
 @Composable
 private fun HostCodeScreen(vm: MainViewModel) {
@@ -159,7 +412,7 @@ private fun HostCodeScreen(vm: MainViewModel) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("Scan this code, or enter it manually")
+        Text("Scan this code, or enter it manually", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(16.dp))
         val payload = vm.sessionQrPayload()
         if (payload != null) {
@@ -172,7 +425,8 @@ private fun HostCodeScreen(vm: MainViewModel) {
             letterSpacing = 8.sp
         )
         Spacer(Modifier.height(8.dp))
-        Text("Expires in 5 minutes", style = MaterialTheme.typography.bodySmall)
+        Text("Expires in 5 minutes", style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(32.dp))
         OutlinedButton(onClick = { vm.cancelHost() }) { Text("Cancel") }
     }
@@ -180,7 +434,7 @@ private fun HostCodeScreen(vm: MainViewModel) {
 
 @Composable
 private fun JoinScreen(vm: MainViewModel) {
-    var code by remember { mutableStateOf("") }
+    var code by rememberSaveable { mutableStateOf("") }
     Column(
         Modifier.fillMaxSize().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -236,12 +490,16 @@ private fun joinErrorMessage(reason: String): String = when (reason) {
 @Composable
 private fun PairedDevicesScreen(vm: MainViewModel) {
     Column(Modifier.fillMaxSize().padding(24.dp)) {
-        Text("Paired devices", style = MaterialTheme.typography.headlineSmall)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { vm.goHome() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+            Text("Paired devices", style = MaterialTheme.typography.headlineSmall)
+        }
         Spacer(Modifier.height(16.dp))
 
         val peers = vm.pairedPeers()
         if (peers.isEmpty()) {
-            Text("No paired devices yet.", style = MaterialTheme.typography.bodyMedium)
+            Text("No paired devices yet.", style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         peers.forEach { peer ->
             ListItem(
@@ -268,8 +526,6 @@ private fun PairedDevicesScreen(vm: MainViewModel) {
             Spacer(Modifier.width(8.dp))
             Text("Pair a new device")
         }
-        Spacer(Modifier.height(8.dp))
-        TextButton(onClick = { vm.goHome() }) { Text("Back") }
     }
 }
 
@@ -280,17 +536,20 @@ private fun SafetyNumberScreen(vm: MainViewModel) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text("Verify this code matches on BOTH devices", textAlign = TextAlign.Center)
+        Text("Verify this code matches on BOTH devices", textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(24.dp))
         Text(
             vm.safetyNumber ?: "",
             style = MaterialTheme.typography.headlineMedium,
-            letterSpacing = 4.sp
+            letterSpacing = 4.sp,
+            fontFamily = FontFamily.Monospace
         )
         Spacer(Modifier.height(16.dp))
         Text(
             "Read it aloud to the other person. Only confirm if they match exactly.",
             style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
         Spacer(Modifier.height(32.dp))
@@ -301,6 +560,10 @@ private fun SafetyNumberScreen(vm: MainViewModel) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// SESSION
+// ---------------------------------------------------------------------------
+
 @Composable
 private fun SessionScreen(vm: MainViewModel) {
     var showKeyboard by remember { mutableStateOf(false) }
@@ -309,10 +572,10 @@ private fun SessionScreen(vm: MainViewModel) {
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         // Connection-state banner.
         val (statusText, statusColor) = when (vm.linkState) {
-            LinkState.CONNECTING -> "Connecting…" to MaterialTheme.colorScheme.onSurfaceVariant
-            LinkState.CONNECTED -> "Connected" to MaterialTheme.colorScheme.primary
-            LinkState.RECOVERING -> "Reconnecting…" to MaterialTheme.colorScheme.error
-            LinkState.CLOSED -> "Session ended" to MaterialTheme.colorScheme.error
+            LinkState.CONNECTING -> "Connecting…" to statusColor(StatusTone.NEUTRAL)
+            LinkState.CONNECTED -> "Connected" to statusColor(StatusTone.SUCCESS)
+            LinkState.RECOVERING -> "Reconnecting…" to statusColor(StatusTone.WARNING)
+            LinkState.CLOSED -> "Session ended" to statusColor(StatusTone.ERROR)
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (vm.linkState == LinkState.RECOVERING || vm.linkState == LinkState.CONNECTING) {
@@ -321,6 +584,12 @@ private fun SessionScreen(vm: MainViewModel) {
             }
             Text(statusText, style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold, color = statusColor)
+            // Route badge when known.
+            vm.iceRoute?.let {
+                Spacer(Modifier.width(12.dp))
+                Text(routeLabel(it), style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         Spacer(Modifier.height(8.dp))
 

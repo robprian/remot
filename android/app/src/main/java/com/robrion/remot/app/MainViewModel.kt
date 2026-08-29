@@ -7,6 +7,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.robrion.remot.host.RemoteInputService
+import com.robrion.remot.network.EndpointState
+import com.robrion.remot.network.NetworkHealth
+import com.robrion.remot.services.ServiceState
+import com.robrion.remot.services.ServiceStatus
 import com.robrion.remot.session.SessionCodes
 import com.robrion.remot.trust.PeerIdentity
 import com.robrion.remot.webrtc.LinkState
@@ -18,13 +22,14 @@ import org.webrtc.EglBase
 import org.webrtc.VideoTrack
 
 /** Screens the single-activity UI can show. */
-enum class Screen { HOME, HOST_CODE, JOIN, SCAN, PAIRED, SAFETY_NUMBER, SESSION }
+enum class Screen { HOME, HOST_CODE, JOIN, SCAN, PAIRED, SAFETY_NUMBER, SESSION, SERVICES }
 
 private const val JOIN_TIMEOUT_MS = 45_000L
 
 /**
  * UI state + intent handling. Bridges Compose to ServiceLocator; keeps only
- * view-facing state, delegating real work to SessionManager / PairingManager.
+ * view-facing state, delegating real work to SessionManager / PairingManager /
+ * NetworkHealthRepository.
  */
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -49,7 +54,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var lastCode: String? = null
     private var joinTimeoutJob: Job? = null
 
+    // ---- service states (refreshed from REAL system state on demand) ----
+    var accessibilityState by mutableStateOf(ServiceState.INSTALLED); private set
+    var notificationState by mutableStateOf(ServiceState.INSTALLED); private set
+
+    // ---- infrastructure health (single source: NetworkHealthRepository) ----
+    var networkHealth by mutableStateOf(NetworkHealth()); private set
+
+    // ---- active session ICE route ("host"/"srflx"/"relay"/null) ----
+    var iceRoute by mutableStateOf<String?>(null); private set
+
     val eglBase: EglBase get() = ServiceLocator.core.eglBase
+
+    /** Legacy convenience — Home screen quick check; full state in [accessibilityState]. */
     val accessibilityEnabled: Boolean get() = RemoteInputService.isEnabled(getApplication())
 
     /** Human-friendly ID of this device, shown on Home. */
@@ -86,13 +103,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         ServiceLocator.session.onRemoteVideo = { remoteVideo = it }
         ServiceLocator.session.onLinkState = { linkState = it }
+        ServiceLocator.session.onIceRoute = { iceRoute = it }
+
+        // Mirror the repository's health state into Compose.
+        ServiceLocator.networkHealth.onHealthChanged = { networkHealth = it }
+
+        refreshServiceStates()
     }
+
+    // ---- lifecycle: start/stop health polling ----
+    /** Call from onResume: begin infrastructure polling + refresh service states. */
+    fun onForeground() {
+        refreshServiceStates()
+        ServiceLocator.networkHealth.start()
+        ServiceLocator.networkHealth.refreshNow()
+    }
+
+    /** Call from onPause: stop polling (never hammer the network in background). */
+    fun onBackground() {
+        ServiceLocator.networkHealth.stop()
+    }
+
+    /** Re-read the REAL Android system state for accessibility + notification listener. */
+    fun refreshServiceStates() {
+        accessibilityState = ServiceStatus.accessibilityState(getApplication())
+        notificationState = ServiceStatus.notificationListenerState(getApplication())
+    }
+
+    fun refreshNetworkHealth() = ServiceLocator.networkHealth.refreshNow()
 
     // ---- navigation ----
     fun goHome() { cancelJoinTimeout(); connecting = false; screen = Screen.HOME }
     fun goJoin() { joinError = null; screen = Screen.JOIN }
     fun goScan() { joinError = null; screen = Screen.SCAN }
     fun goPaired() { screen = Screen.PAIRED }
+    fun goServices() { refreshServiceStates(); screen = Screen.SERVICES }
 
     /** QR payload for the current session code, or null if none yet. */
     fun sessionQrPayload(): String? = sessionCode?.let { SessionCodes.toQrPayload(it) }

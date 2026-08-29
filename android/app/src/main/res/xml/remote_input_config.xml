@@ -1,8 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Remot's accessibility service only dispatches gestures and sets text on
+  focused input fields during an approved session. Request the MINIMUM
+  capability set needed for that — no blanket event mask, no key filtering,
+  no interactive-window traversal that Android 16 treats as invasive.
+
+  - canPerformGestures: required for tap / long-press / swipe dispatch.
+  - canRetrieveWindowContent: required to find the focused input node for
+    ACTION_SET_TEXT (typing). No screen content is read or transmitted.
+  - accessibilityEventTypes: only what the service listens for. We perform
+    actions on demand, so a minimal mask avoids the resource-heavy typeAllMask.
+  - feedbackType: none (we do not announce anything to the user).
+-->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:accessibilityEventTypes="typeAllMask"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeViewFocused|typeViewTextChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagRequestFilterKeyEvents"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
     android:notificationTimeout="100"

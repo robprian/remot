@@ -9,17 +9,26 @@ plugins {
 //   Local/CI in production pass -PSIGNALING_URL=... (or set the env below).
 //   Signing secrets come ONLY from Gradle properties/env supplied outside the repo
 //   (GitHub Secrets -> workflow env, or local $HOME/.gradle/gradle.properties).
-val signingKeystorePath   = providers.gradleProperty("RELEASE_KEYSTORE_PATH").orElse(systemPropertyOrEnv("RELEASE_KEYSTORE_PATH"))
-val signingKeystorePass   = providers.gradleProperty("RELEASE_KEYSTORE_PASSWORD").orElse(systemPropertyOrEnv("RELEASE_KEYSTORE_PASSWORD"))
-val signingKeyAlias       = providers.gradleProperty("RELEASE_KEY_ALIAS").orElse(systemPropertyOrEnv("RELEASE_KEY_ALIAS"))
-val signingKeyPass        = providers.gradleProperty("RELEASE_KEY_PASSWORD").orElse(systemPropertyOrEnv("RELEASE_KEY_PASSWORD"))
-val signalingUrl          = providers.gradleProperty("SIGNALING_URL").orElse(systemPropertyOrEnv("SIGNALING_URL"))
 
-// Returns a Provider with the value of a system property OR an env var of the same
-// name (System.getenv wins for CI env injection; -D and system props work locally).
-fun systemPropertyOrEnv(name: String): String {
-    return System.getenv(name) ?: (System.getProperty(name) ?: "")
+// Reads a value from a Gradle property, then a system property, then an env var of
+// the same name. Unset/blank values resolve to null so callers treat them as absent.
+fun configValue(vararg names: String): String? {
+    for (name in names) {
+        val fromProps = providers.gradleProperty(name).orNull
+        if (!fromProps.isNullOrBlank()) return fromProps
+        val sys = System.getProperty(name)
+        if (!sys.isNullOrBlank()) return sys
+        val env = System.getenv(name)
+        if (!env.isNullOrBlank()) return env
+    }
+    return null
 }
+
+val signingKeystorePath = configValue("RELEASE_KEYSTORE_PATH", "keystorePath")
+val signingKeystorePass = configValue("RELEASE_KEYSTORE_PASSWORD", "keystorePassword")
+val signingKeyAlias     = configValue("RELEASE_KEY_ALIAS", "keyAlias")
+val signingKeyPass      = configValue("RELEASE_KEY_PASSWORD", "keyPassword")
+val signalingUrl        = configValue("SIGNALING_URL")
 
 android {
     namespace = "com.robrion.remot"
@@ -30,9 +39,9 @@ android {
         minSdk = 25
         targetSdk = 35
         // V/C/P production versioning (see docs/VERSIONING.md):
-        // versionCode = V*100000 + C*100 + P  →  V2C001 = 200100
-        versionCode = 200100
-        versionName = "V2C001"
+        // versionCode = V*100000 + C*100 + P  →  V2C002 = 200200
+        versionCode = 200200
+        versionName = "V2C002"
 
         // Signaling endpoint, overridable at build time. On CI it is supplied via
         // the SIGNALING_URL secret; locally it defaults to a build-time property.
@@ -41,7 +50,7 @@ android {
         buildConfigField(
             "String",
             "SIGNALING_URL",
-            "\"" + (signalingUrl.getOrElse("ws://SIGNALING_URL_OVERRIDE_ME:8080")) + "\""
+            "\"" + (signalingUrl ?: "ws://SIGNALING_URL_OVERRIDE_ME:8080") + "\""
         )
     }
 
@@ -66,10 +75,12 @@ android {
     // key or emit an unsigned production APK.
     signingConfigs {
         create("release") {
-            storeFile = signingKeystorePath.getOrNull()?.let { file(it) }
-            storePassword = signingKeystorePass.getOrNull()
-            keyAlias = signingKeyAlias.getOrNull()
-            keyPassword = signingKeyPass.getOrNull()
+            if (signingKeystorePath != null) {
+                storeFile = file(signingKeystorePath)
+                storePassword = signingKeystorePass
+                keyAlias = signingKeyAlias
+                keyPassword = signingKeyPass
+            }
         }
     }
 
@@ -79,7 +90,7 @@ android {
             buildConfigField(
                 "String",
                 "SIGNALING_URL",
-                "\"" + (signalingUrl.getOrElse("ws://10.0.2.2:8080")) + "\""
+                "\"" + (signalingUrl ?: "ws://10.0.2.2:8080") + "\""
             )
         }
         release {
@@ -90,10 +101,10 @@ android {
             // so debug/test/lint tasks still work locally without signing credentials.
             if (gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }) {
                 val required = listOfNotNull(
-                    signingKeystorePath.getOrNull(),
-                    signingKeystorePass.getOrNull(),
-                    signingKeyAlias.getOrNull(),
-                    signingKeyPass.getOrNull()
+                    signingKeystorePath,
+                    signingKeystorePass,
+                    signingKeyAlias,
+                    signingKeyPass
                 )
                 require(required.size == 4) {
                     "Release signing requires RELEASE_KEYSTORE_PATH, RELEASE_KEYSTORE_PASSWORD, " +
@@ -101,7 +112,8 @@ android {
                         "Refusing to build an unsigned/debug-signed production APK."
                 }
             }
-            signingConfig = signingConfigs.getByName("release")
+            val releaseSigning = signingConfigs.getByName("release")
+            if (releaseSigning.storeFile != null) signingConfig = releaseSigning
         }
     }
 }

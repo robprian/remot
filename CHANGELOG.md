@@ -12,6 +12,75 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C002 — 2026-08-29
+
+### Summary
+
+Android 16 compatibility, UI redesign, and real infrastructure health
+monitoring. Fixes the Accessibility Service and Notification Listener so they
+can actually be enabled on Android 16, makes the UI respect system window
+insets (no more content under the status bar), redesigns the dashboard with a
+modern design system, and adds honest STUN/TURN health checks with measured
+latency plus WebRTC connection-route diagnostics.
+
+### Fixed
+
+- **Android 16 Accessibility Service:** the service was declared
+  `android:exported="false"`, which prevents Android (Settings) from binding
+  and enabling it — the merged manifest now declares it `exported="true"`
+  with the BIND_ACCESSIBILITY_SERVICE permission (binding stays system-only)
+  plus a proper label. Tightened the accessibility config to only the
+  capabilities Remot actually uses (gestures + focused-text input); removed
+  the resource-heavy `typeAllMask` / key-filter flags.
+- **Notification Listener:** the app had NO NotificationListenerService at
+  all — a status that claimed to be “cannot be enabled” was in fact “not
+  implemented”. Added `RemotNotificationListener` (exported=true,
+  BIND_NOTIFICATION_LISTENER_SERVICE) with lifecycle tracking; notifications
+  are never read, logged, or transmitted.
+- **System window insets:** the app now runs edge-to-edge (Android 15/16
+  enforce this) and the Compose root applies `WindowInsets.safeDrawing`, so
+  the header, content, and navigation never hide under the status bar,
+  display cutout, or gesture/navigation bar.
+
+### Added
+
+- `ServiceStatus` — real system-state detection for Accessibility and
+  Notification Access (INSTALLED / ENABLED / CONNECTED) read from the actual
+  Settings / system bind state, never a cached boolean.
+- **System Services screen** with per-service status and “Manage” buttons
+  that open the correct Android settings screen (with safe fallbacks) and
+  re-check state on return.
+- `NetworkHealthRepository` — single source of truth for Internet, Signaling,
+  STUN, and TURN health with one shared polling loop (15s, stopped in
+  background, immediate on network change / resume / manual refresh).
+- `StunTurnProbe` — real STUN Binding + TURN Allocate handshake (RFC 5389 /
+  RFC 5766) using the short-lived credentials the signaling server issues;
+  reports DNS / STUN / TURN separately and measures real round-trip latency
+  in ms. Never fakes status from DNS or config alone.
+- **WebRTC ICE route diagnostics** — the selected candidate type
+  (host / srflx / relay) is read from the stats API, so the UI honestly shows
+  whether the session is using a TURN relay or a direct path.
+- Diagnostics section: Android version/SDK, manufacturer/model, app version,
+  device ID, network health, latency, ICE route.
+
+### Improved
+
+- Redesigned dashboard: modern design system (tokens, typography, shapes),
+  connection-health card, compact session state, primary actions prioritized,
+  status shown as icon+text (never color alone).
+- Consistent screens (Host code, Join, Paired, Safety number, Session)
+  restyled to the same system; safe inset handling throughout.
+
+### Validation
+
+- Accessibility manifest (merged): exported=true + BIND_ACCESSIBILITY_SERVICE + intent-filter — PASS
+- Notification listener manifest (merged): exported=true + BIND_NOTIFICATION_LISTENER_SERVICE + intent-filter — PASS
+- STUN/TURN probe against local coturn with production credentials: STUN OK, TURN Allocate OK (measured ms) — PASS
+- Debug build / unit tests / lint / signed release build / apksigner verify — PASS (local)
+- Real-device Android 16 enable + remote session: pending device testing
+
+---
+
 ## V2C001 — 2026-08-29
 
 ### Summary

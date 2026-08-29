@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Remot</string>
+    <string name="accessibility_service_label">Remot Control Service</string>
     <string name="accessibility_desc">Used only to perform taps, swipes, long presses and text input during a remote-control session that you have approved. Remot does not read your screen content or data from other apps.</string>
+    <string name="notification_listener_label">Remot Notifications</string>
 </resources>

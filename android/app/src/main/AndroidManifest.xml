@@ -64,17 +64,37 @@
             android:foregroundServiceType="connectedDevice"
             android:exported="false"/>
 
-        <!-- HOST: remote input via AccessibilityService -->
+        <!-- HOST: remote input via AccessibilityService.
+             NOTE: android:exported must be "true" — the system (Settings) binds
+             to accessibility services directly, and an exported=false service
+             cannot be discovered or enabled on Android 7.1+ (visible on Android
+             16). The BIND_ACCESSIBILITY_SERVICE permission still restricts
+             binding to the system only. -->
         <service
             android:name=".host.RemoteInputService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="false">
+            android:exported="true"
+            android:label="@string/accessibility_service_label"
+            android:description="@string/accessibility_desc">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService"/>
             </intent-filter>
             <meta-data
                 android:name="android.accessibilityservice"
                 android:resource="@xml/remote_input_config"/>
+        </service>
+
+        <!-- HOST: notification listener (used to surface host notifications to an
+             active remote session). Must be exported=true + carry the
+             BIND_NOTIFICATION_LISTENER_SERVICE permission so Settings can bind it. -->
+        <service
+            android:name=".host.RemotNotificationListener"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true"
+            android:label="@string/notification_listener_label">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService"/>
+            </intent-filter>
         </service>
 
         <!-- FCM wake receiver -->

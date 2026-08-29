@@ -67,15 +67,14 @@ class RemoteInputService : AccessibilityService() {
         private const val LONG_PRESS_DURATION_MS = 600L
 
         @Volatile var instance: RemoteInputService? = null
+            private set
 
-        fun isEnabled(context: android.content.Context): Boolean {
-            val expected = "${context.packageName}/${RemoteInputService::class.java.name}"
-            val enabled = android.provider.Settings.Secure.getString(
-                context.contentResolver,
-                android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-            ) ?: return false
-            return enabled.split(':').any { it.equals(expected, ignoreCase = true) }
-        }
+        /** True only while the system has this service bound and running. */
+        val isConnected: Boolean get() = instance != null
+
+        /** Legacy convenience — see services.ServiceStatus for the full state machine. */
+        fun isEnabled(context: android.content.Context): Boolean =
+            com.robrion.remot.services.ServiceStatus.isAccessibilityServiceEnabled(context)
     }
 }
 

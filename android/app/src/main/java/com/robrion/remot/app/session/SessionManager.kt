@@ -36,6 +36,7 @@ class SessionManager(
 
     var onRemoteVideo: ((VideoTrack) -> Unit)? = null
     var onLinkState: ((LinkState) -> Unit)? = null
+    var onIceRoute: ((String?) -> Unit)? = null
 
     fun updateIceServers(arr: JSONArray) {
         iceServers = WebRtcCore.parseIceServers(arr)
@@ -48,6 +49,7 @@ class SessionManager(
         peerPublicKeyProvider = { peerId -> resolvePeerPub(peerId) }
         onRemoteVideo = { this@SessionManager.onRemoteVideo?.invoke(it) }
         onLinkState = { this@SessionManager.onLinkState?.invoke(it) }
+        onIceRoute = { this@SessionManager.onIceRoute?.invoke(it) }
         onControlMessage = { InputRouter.dispatch(it) }
     }
 

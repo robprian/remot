@@ -120,7 +120,7 @@ screen** is the controlled one for that session.
 
 ```
 ├── android/                  # Kotlin / Jetpack Compose app
-│   └── app/src/main/java/com/remot/app/
+│   └── app/src/main/java/com/robrion/remot/
 │       ├── RemoteApp.kt          # Application: init + FCM token
 │       ├── ServiceLocator.kt     # manual DI + signaling listener fan-out
 │       ├── MainActivity.kt       # Compose host + permission launchers
@@ -154,13 +154,14 @@ screen** is the controlled one for that session.
 | `docs/REMOTE_PROTOCOL.md` | Signaling + control protocol reference |
 | `docs/VERSIONING.md` | V/C/P production versioning + versionCode mapping |
 | `docs/DEVELOPMENT.md` | Build, test, release, CI workflow |
+| `docs/INFRASTRUCTURE.md` | GitHub Actions vs. runtime-server responsibilities |
 | `infra/README.md` | Signaling + TURN deployment, firewall, TLS |
 
 ## Production versioning
 
 Remot uses a three-level production version: `V{major}C{change}P{patch}`
-(e.g. `V1C001`, `V1C001P01`). The current version is **V1C001** (versionCode
-100100). Git tags are lowercase (`v1c001`), Android `versionName` matches the
+(e.g. `V1C001`, `V1C001P01`). The current version is **V2C002** (versionCode
+200200). Git tags are lowercase (`v1c001`), Android `versionName` matches the
 production identifier, and the release workflow triggers only on such tags.
 Full spec and the versionCode mapping: `docs/VERSIONING.md`.
 
@@ -187,7 +188,7 @@ Full spec and the versionCode mapping: `docs/VERSIONING.md`.
 - Unattended access on Android 11+ is limited by single-use MediaProjection
   intents (documented in `docs/ANDROID_COMPATIBILITY.md`).
 - Secure screens (DRM, some banking apps) cannot be captured by MediaProjection.
-- Multi-touch and device audio are not implemented in V1C001.
+- Multi-touch and device audio are not implemented in V2C002.
 - Device wake requires a Firebase project (FCM); attended sessions work
   without it.
 

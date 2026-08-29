@@ -2,6 +2,7 @@ package com.robrion.remot
 
 import android.content.Context
 import com.robrion.remot.identity.DeviceIdentity
+import com.robrion.remot.network.NetworkHealthRepository
 import com.robrion.remot.session.SessionManager
 import com.robrion.remot.signaling.SignalingClient
 import com.robrion.remot.trust.PairingManager
@@ -30,6 +31,7 @@ object ServiceLocator : SignalingClient.Listener {
     lateinit var signaling: SignalingClient; private set
     lateinit var session: SessionManager; private set
     lateinit var pairing: PairingManager; private set
+    lateinit var networkHealth: NetworkHealthRepository; private set
     lateinit var deviceId: String; private set
 
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -52,16 +54,23 @@ object ServiceLocator : SignalingClient.Listener {
         signaling = SignalingClient(signalingUrl, deviceId, this)
         session = SessionManager(appContext, core, signaling, trust, scope)
         pairing = PairingManager(signaling, trust)
+        networkHealth = NetworkHealthRepository(appContext, scope)
 
         signaling.connect()
     }
 
     // ---- SignalingClient.Listener ----
-    override fun onRegistered(iceServers: JSONArray) { session.updateIceServers(iceServers) }
+    override fun onRegistered(iceServers: JSONArray) {
+        session.updateIceServers(iceServers)
+        networkHealth.onIceServers(session.iceServers)
+    }
     override fun onRegisterFailed(reason: String) {
         android.util.Log.w("RemotApp", "signaling registration rejected by server: $reason")
     }
-    override fun onTurnCredentials(iceServers: JSONArray) { session.updateIceServers(iceServers) }
+    override fun onTurnCredentials(iceServers: JSONArray) {
+        session.updateIceServers(iceServers)
+        networkHealth.onIceServers(session.iceServers)
+    }
     override fun onSessionCode(code: String) = uiOnSessionCode(code)
     override fun onJoinRequest(controllerId: String, unattended: Boolean, grantId: String?) =
         uiOnJoinRequest(controllerId, unattended, grantId)

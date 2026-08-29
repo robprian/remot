@@ -35,8 +35,14 @@ class RtcSession(
     var onRemoteVideo: ((VideoTrack) -> Unit)? = null
     var onControlMessage: ((JSONObject) -> Unit)? = null
     var onLinkState: ((LinkState) -> Unit)? = null
+    /** Called when the selected ICE route is known/updated: "host", "srflx", "relay" or null. */
+    var onIceRoute: ((String?) -> Unit)? = null
     /** Verify a peer's identity owns the DER pub for the given peerId (from TrustStore). */
     var peerPublicKeyProvider: ((peerId: String) -> ByteArray?)? = null
+
+    /** Selected ICE candidate type: "host" | "srflx" | "relay" | null (unknown). */
+    @Volatile var iceRoute: String? = null
+        private set
 
     private var pc: PeerConnection? = null
     private var dataChannel: DataChannel? = null
@@ -63,7 +69,9 @@ class RtcSession(
             override fun onDataChannel(dc: DataChannel) = bindData(dc)
             override fun onIceConnectionChange(s: PeerConnection.IceConnectionState) = handleIceState(s)
             override fun onSignalingChange(s: PeerConnection.SignalingState) {}
-            override fun onIceGatheringChange(s: PeerConnection.IceGatheringState) {}
+            override fun onIceGatheringChange(s: PeerConnection.IceGatheringState) {
+                if (s == PeerConnection.IceGatheringState.COMPLETE) queryIceRoute()
+            }
             override fun onIceCandidatesRemoved(c: Array<out IceCandidate>) {}
             override fun onAddStream(s: MediaStream) {}
             override fun onRemoveStream(s: MediaStream) {}
@@ -177,7 +185,62 @@ class RtcSession(
         val first = !everConnected
         everConnected = true
         setLink(LinkState.CONNECTED)
+        queryIceRoute()
         if (first) armRecoveryWatchdogs()
+    }
+
+    /**
+     * Determines the SELECTED ICE route via the WebRTC stats API (selected
+     * candidate pair → local candidate type). "relay" means TURN is actually
+     * in use; "srflx" means STUN-obtained server-reflexive; "host" means a
+     * direct LAN path. Returns null (unknown) when stats aren't available yet.
+     */
+    private fun queryIceRoute() {
+        val conn = pc ?: return
+        try {
+            conn.getStats(object : org.webrtc.RTCStatsCollectorCallback {
+                override fun onStatsDelivered(report: org.webrtc.RTCStatsReport) {
+                    val type = extractSelectedCandidateType(report)
+                    if (type != null && type != iceRoute) {
+                        iceRoute = type
+                        onIceRoute?.invoke(type)
+                    }
+                }
+            })
+        } catch (e: Exception) {
+            android.util.Log.w("RtcSession", "getStats unavailable: ${e.message}")
+        }
+    }
+
+    /**
+     * Parse an RTCStatsReport for the selected candidate pair's local candidate
+     * type. Stats keys are the standard webrtc-internals ones: transport stats
+     * carry selectedCandidatePairId; candidate-pair stats carry localCandidateId;
+     * local-candidate stats carry candidateType.
+     */
+    private fun extractSelectedCandidateType(report: org.webrtc.RTCStatsReport): String? {
+        val stats = report.statsMap ?: return null
+        // 1. Find the selected candidate-pair id from a transport entry.
+        var selectedPairId: String? = null
+        for (s in stats.values) {
+            if (s.type == "transport") {
+                val sel = s.members["selectedCandidatePairId"]
+                if (sel is String && sel.isNotEmpty()) { selectedPairId = sel; break }
+            }
+        }
+        if (selectedPairId == null) return null
+        // 2. Find that pair's localCandidateId.
+        val pair = stats[selectedPairId]
+        val localId = pair?.members?.get("localCandidateId") as? String ?: return null
+        // 3. Read candidateType from the local candidate.
+        return (stats[localId]?.members?.get("candidateType") as? String)?.let {
+            when (it) {
+                "host" -> "host"
+                "srflx", "prflx" -> "srflx"
+                "relay" -> "relay"
+                else -> it
+            }
+        }
     }
 
     private fun armRecoveryWatchdogs() {

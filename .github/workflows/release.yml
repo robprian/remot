@@ -53,6 +53,17 @@ jobs:
             echo "Ref '$REF' is not a V/C/P production tag — skipping release."
           fi
 
+      # Release MUST NOT rebuild the APK — it only validates the exact Build
+      # artifact. apksigner/aapt2 still need the Android SDK build-tools, so we
+      # install the SDK toolchain here for validation only (no Gradle, no build).
+      - name: Install Android build-tools for APK validation
+        if: env.release_tag != ''
+        uses: android-actions/setup-android@v3
+
+      - name: Install required build-tools
+        if: env.release_tag != ''
+        run: sdkmanager "build-tools;34.0.0"
+
       - name: Download exact build artifact
         if: env.release_tag != ''
         uses: actions/download-artifact@v4
@@ -77,7 +88,9 @@ jobs:
           echo "$BADGING" | grep -q "versionName='${{ env.version_name }}'" || { echo "::error::versionName mismatch (expected ${{ env.version_name }})"; exit 1; }
           echo "$BADGING" | grep -q "versionCode='${{ env.version_code }}'" || { echo "::error::versionCode mismatch (expected ${{ env.version_code }})"; exit 1; }
           APKSIGNER="$(ls "${ANDROID_SDK_ROOT:-$ANDROID_HOME}"/build-tools/*/apksigner 2>/dev/null | head -1)"
+          [ -n "$APKSIGNER" ] || { echo "::error::apksigner not found"; exit 1; }
           "$APKSIGNER" verify "$APK" || { echo "::error::APK signature verification failed"; exit 1; }
+          "$APKSIGNER" verify --print-certs "$APK" | grep -E "Signer #|SHA-256 digest|certificate DN" | sed 's/^/   /'
           cp "$APK" "$GITHUB_WORKSPACE/${{ env.apk_name }}"
           echo "artifact validation PASSED (${{ env.apk_name }})"
 
