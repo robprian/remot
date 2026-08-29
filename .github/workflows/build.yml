@@ -103,3 +103,20 @@ jobs:
           name: remot-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: ignore
+
+  # External reachability probe for the production server, run from GitHub's
+  # public network on every build. Advisory (continue-on-error): STUN/TURN may
+  # be blocked at the cloud firewall until the security group is opened, and
+  # that must NOT block Android releases. The probe only fails when the
+  # signaling WebSocket itself is unreachable.
+  network-probe:
+    name: External endpoint probe (production server)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      SERVER_URL: ${{ secrets.SERVER_URL }}
+      SERVER_IP: ${{ secrets.SERVER_IP }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe signaling / STUN / TURN from this (external) network
+        run: node scripts/probe-endpoints.mjs

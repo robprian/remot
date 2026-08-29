@@ -18,6 +18,7 @@ function code6() {
 
 /** Send a register-failed notice and close the connection (a rejected registration is dead). */
 function rejectRegister(ws, reason) {
+  log.warn('register_failed', { ip: ws.ip, reason });
   send(ws, { type: 'register-failed', reason });
   ws.close(4000, reason);
 }
@@ -59,7 +60,9 @@ function start() {
     ws.deviceId = null;
     ws.ip = req.socket.remoteAddress;
     ws.isAlive = true;
+    ws.pendingAuthTimer = null;
     ws.msgWindow = { count: 0, resetAt: Date.now() + cfg.rateLimit.windowMs };
+    log.info('ws_connect', { ip: ws.ip });
     ws.on('pong', () => { ws.isAlive = true; });
 
     ws.on('message', (raw) => {
@@ -80,6 +83,7 @@ function start() {
     });
 
     ws.on('close', () => {
+      if (ws.pendingAuthTimer) clearTimeout(ws.pendingAuthTimer);
       if (ws.deviceId) S.devices.delete(ws.deviceId);
     });
   });
@@ -146,6 +150,12 @@ async function handle(ws, m) {
 
       const nonce = crypto.randomBytes(32);
       ws.pendingAuth = { deviceId, pubDer, nonce };
+      // Close sockets that start a register but never answer the challenge, so a
+      // stalled client can't hold a socket (and an IP) open forever.
+      if (ws.pendingAuthTimer) clearTimeout(ws.pendingAuthTimer);
+      ws.pendingAuthTimer = setTimeout(() => {
+        if (ws.pendingAuth && !ws.deviceId) rejectRegister(ws, 'auth-timeout');
+      }, 15000);
       send(ws, { type: 'auth-challenge', nonce: nonce.toString('base64') });
       break;
     }
@@ -174,6 +184,7 @@ async function handle(ws, m) {
       );
       if (!valid) return rejectRegister(ws, 'auth-failed');
 
+      if (ws.pendingAuthTimer) clearTimeout(ws.pendingAuthTimer);
       ws.pendingAuth = null;
       ws.deviceId = pa.deviceId;
       S.devices.set(pa.deviceId, ws);

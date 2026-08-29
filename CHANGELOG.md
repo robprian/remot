@@ -12,6 +12,65 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C004P01 — 2026-08-29
+
+### Summary
+
+Server + CI patch: makes the signaling WebSocket provably reachable from the
+public internet, hardens the broker against stalled connections, stops
+advertising a TURNS (TLS) endpoint that cannot work yet, and adds a permanent
+external endpoint probe to every build so server reachability is verified
+from GitHub's network on each push. No Android app code changed; the version
+bump follows the mandatory-P rule so installed V2C004 devices see the update
+prompt.
+
+### Changed
+
+- Bumped production version to **V2C004P01** (versionCode 200401).
+
+### Fixed (server — deployed via systemd)
+
+- **Signaling was verified running and reachable:** the broker runs under
+  `remot-signaling.service` with auto-restart (systemd restarted it in 3 s
+  when the process was killed), and `http://<public-ip>:8080/healthz` was
+  fetched successfully from an external vantage point (`r.jina.ai`). A raw
+  WebSocket upgrade returns `101 Switching Protocols` and a full register
+  round-trip answers `register-failed` — the server message loop is alive.
+- **Stalled registrations now time out:** a client that sent `register` but
+  never answered the auth challenge could hold a socket (and an IP) open
+  forever. The broker now closes it after 15 s (`auth-timeout`) and clears the
+  timer on success/close.
+- **Diagnosability:** the broker now logs `ws_connect` (ip) and
+  `register_failed` (ip, reason) as structured JSON, so "can't connect"
+  reports can be checked against the actual server log.
+- **Dead TURNS URL removed:** coturn has no TLS certificate, so the
+  advertised `turns:host:5349` ICE server could never connect. The signaling
+  server now issues only `stun:` + `turn:` (UDP) until a certificate is
+  provisioned (commented in `server/src/turn.js`).
+
+### Added (CI external probe)
+
+- `scripts/probe-endpoints.mjs` — dependency-free external probe that checks
+  TCP :8080, HTTP `/healthz`, the WebSocket upgrade, a full `register`
+  round-trip, a real STUN Binding over UDP :3478, and TURN TLS :5349.
+  Endpoints come from `SERVER_URL`/`SERVER_IP` env vars (GitHub secrets) — no
+  IPs are hardcoded. Exits non-zero only when signaling is unreachable;
+  STUN/TURN results are reported without failing.
+- `build.yml` gains a `network-probe` job (GitHub-hosted runner = external
+  network) that runs the probe on every build with `continue-on-error: true`,
+  so a cloud-firewall-blocked TURN never blocks Android releases while
+  signaling reachability is visible in every run log.
+
+### Ops note
+
+- Verified on the server: coturn answers STUN locally (0 ms), the relay range
+  is 49152–65535, `external-ip` is set, and auth-secret HMAC credentials are
+  issued. STUN/TURN remain `unreachable` from devices only because the cloud
+  security group still drops 3478/5349 inbound — open UDP+TCP 3478 (and 5349
+  once TLS is configured) in the Alibaba Security Group; the app and probe
+  will report them online immediately after.
+
+---
 ## V2C004 — 2026-08-29
 
 ### Summary

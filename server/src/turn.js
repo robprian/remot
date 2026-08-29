@@ -23,7 +23,10 @@ function iceServers() {
   return [
     { urls: `stun:${h}:${cfg.turn.stunPort}` },
     { urls: `turn:${h}:${cfg.turn.stunPort}?transport=udp`, username, credential: password },
-    { urls: `turns:${h}:${cfg.turn.tlsPort}?transport=tcp`, username, credential: password },
+    // NOTE: `turns:` (TLS on 5349) is deliberately NOT advertised — coturn has
+    // no TLS certificate configured, so a turns URL can never connect. Advertise
+    // it again only after provisioning a cert and enabling tls-listening-port
+    // on the server. ICE falls back to the UDP relay above.
   ];
 }
 

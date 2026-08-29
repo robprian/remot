@@ -173,6 +173,28 @@ A confirmed full-stack test is a real relay allocation through the app or a
 WebRTC trickle-ICE test page (e.g. webrtc.github.io/samples) with the TURN
 credentials from the signaling server.
 
+### CI-external probe (`scripts/probe-endpoints.mjs`)
+
+Every GitHub Actions build runs a **network probe from GitHub's public
+network** (`network-probe` job in `build.yml`) against the production
+endpoints. It checks, in order:
+
+1. TCP connect to the signaling port (from `SERVER_URL`, e.g. `:8080`)
+2. HTTP `GET /healthz`
+3. WebSocket upgrade (`101 Switching Protocols`)
+4. Full `register` round-trip (expects the server to answer `register-failed`)
+5. STUN Binding over UDP :3478 (real round-trip, ms)
+6. TURN TLS port :5349 (TCP)
+
+```bash
+SERVER_URL="ws://your.host:8080" SERVER_IP=203.0.113.10 node scripts/probe-endpoints.mjs
+```
+
+The script reads endpoints from env (GitHub secrets in CI) — nothing is
+hardcoded. It exits non-zero only when **signaling** is unreachable; STUN/TURN
+results are reported without failing so a firewall-blocked TURN never blocks
+Android releases (the probe job uses `continue-on-error: true`).
+
 ---
 
 ## 3. TLS
@@ -180,7 +202,9 @@ credentials from the signaling server.
 - Signaling: terminate TLS at your reverse proxy (Caddy/nginx) or run the
   server behind it; the app expects `wss://`.
 - TURN: coturn terminates TLS directly with the Let's Encrypt certs
-  (`turns:` scheme).
+  (`turns:` scheme). Until a certificate is provisioned, the signaling server
+  deliberately does **not** advertise `turns:` URLs (see `server/src/turn.js`)
+  so clients never waste time on a TURNS endpoint that cannot connect.
 
 ---
 
