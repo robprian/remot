@@ -126,6 +126,16 @@ explicit platform-gated user action.
   cannot work until the firewall/security-group opens UDP+TCP 3478, TCP 5349,
   and UDP 49152–65535 for the public IP. Documented in `infra/README.md` and
   surfaced by `check-ports.sh` (elevated to a gateway above).
+- **Signaling `Software caused connection abort`:** the deployment's signaling/
+  TURN hostname (`turn.robrion.net`) resolves to **IPv6 (AAAA) first** and
+  IPv4 after; on networks without a routable IPv6 path the IPv6 leg can be
+  aborted before OkHttp/InetAddress falls through to the working IPv4 address,
+  so signaling showed unreachable even though the server answered `200 OK` on
+  IPv4. The signaling `OkHttpClient` and the `StunTurnProbe` DNS resolution
+  now **prefer IPv4**, so the IPv6 leg is skipped when IPv4 is available.
+- **Maintainer link in-app:** the Developer card on the System Services screen
+  now shows a tappable **`@robprian ↗`** link that opens
+  `https://github.com/robprian/remot`.
 
 ### Versioning
 

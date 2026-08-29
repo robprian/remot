@@ -54,7 +54,7 @@ class StunTurnProbe(
     /** Runs the full probe. Must be called off the main thread. */
     fun probe(timeoutMs: Long = 4000): StunTurnResult {
         val address: InetAddress = try {
-            InetAddress.getByName(host)
+            resolveIpv4First()
         } catch (e: Exception) {
             Log.w(logTag, "DNS failed for $host: ${e.message}")
             return StunTurnResult(dnsOk = false, stunOk = false, turnOk = false, error = "dns")
@@ -106,6 +106,18 @@ class StunTurnProbe(
         } finally {
             runCatching { socket.close() }
         }
+    }
+
+    /**
+     * Resolves the host preferring IPv4. Some TURN hostnames publish AAAA
+     * (IPv6) records that aren't routable from the device's network (e.g.
+     * turn.robrion.net resolves to IPv6 first, then IPv4); preferring the IPv4
+     * address avoids a UDP probe that times out or aborts on the IPv6 leg.
+     */
+    private fun resolveIpv4First(): InetAddress {
+        val all = InetAddress.getAllByName(host)
+        return all.firstOrNull { it.hostAddress?.contains(":") == false }
+            ?: all.first()
     }
 
     // ---- STUN wire helpers ----

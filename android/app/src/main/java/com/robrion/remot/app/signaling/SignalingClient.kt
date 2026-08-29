@@ -5,6 +5,7 @@ import android.os.Looper
 import com.robrion.remot.identity.DeviceIdentity
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -12,6 +13,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.InetAddress
 
 /**
  * WebSocket signaling client with automatic reconnect + re-register. Registration
@@ -55,7 +57,24 @@ class SignalingClient(
 
     var onReconnected: (() -> Unit)? = null
 
-    private val client = OkHttpClient.Builder().pingInterval(20, java.util.concurrent.TimeUnit.SECONDS).build()
+    // Prefer IPv4 when resolving the signaling host. Some deployments put the
+    // server behind a DNS with AAAA (IPv6) records that aren't actually routable
+    // from mobile carriers — e.g. turn.robrion.net resolves to IPv6 first, then
+    // IPv4, and the IPv6 leg can abort ("Software caused connection abort")
+    // before OkHttp falls through to IPv4. Ordering IPv4 first fixes that.
+    private val ipv4FirstDns = Dns { hostname ->
+        val all = try {
+            InetAddress.getAllByName(hostname).toList()
+        } catch (e: Exception) {
+            Dns.SYSTEM.lookup(hostname)
+        }
+        all.sortedBy { it.hostAddress?.contains(":") == true } // IPv6 last (contains ':')
+    }
+
+    private val client = OkHttpClient.Builder()
+        .dns(ipv4FirstDns)
+        .pingInterval(20, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
     private var ws: WebSocket? = null
     private var reconnectAttempt = 0
     private var closedByUser = false

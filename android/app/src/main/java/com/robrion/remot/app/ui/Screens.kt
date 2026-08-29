@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -433,6 +434,7 @@ private fun InfoRow(label: String, value: String) {
 /** Developer-facing build/signing/endpoint info surfaced for support & debugging. */
 @Composable
 private fun DeveloperInfoCard(health: NetworkHealth) {
+    val uriHandler = LocalUriHandler.current
     Card(
         Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -444,9 +446,26 @@ private fun DeveloperInfoCard(health: NetworkHealth) {
             InfoRow("applicationId", BuildConfig.APPLICATION_ID)
             InfoRow("Signaling", health.signalingUrl ?: "—")
             InfoRow("TURN host", health.turnHost ?: "—")
+            // Maintainer — tappable link straight to the repo.
+            Row(
+                Modifier.clickable { uriHandler.openUri(GITHUB_REPO_URL) },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Developer", style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                Text(
+                    "@robprian ↗",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
+            }
         }
     }
+
 }
+
+private const val GITHUB_REPO_URL = "https://github.com/robprian/remot"
 
 // ---------------------------------------------------------------------------
 // HOST CODE / JOIN / PAIRED / SAFETY NUMBER — restyled consistently
