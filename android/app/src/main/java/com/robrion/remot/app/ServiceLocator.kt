@@ -151,16 +151,24 @@ fun signalingUrlCandidates(
 ): List<String> {
     val out = LinkedHashSet<String>()
 
-    /** Adds wss:// on the TLS port (8443), then ws:// on the plain port. */
-    fun candidates(host: String, originalPort: Int, originalScheme: String, path: String) {
+    /**
+     * Adds the TLS endpoint(s) then the plain ws:// form for one host.
+     *
+     * [preferredTlsPort] is the TLS port tried first for this host — standard
+     * 443 for domain endpoints terminated by a reverse proxy (nginx), 8443 for
+     * the direct-signaling IP hosts that only serve WSS on 8443. The plain
+     * `ws://:8080` stays as a legacy last-resort for each host.
+     */
+    fun candidates(host: String, originalPort: Int, originalScheme: String, path: String, preferredTlsPort: Int) {
         val plainPort = if (originalPort == 80 || originalPort == 443 || originalPort == 8443) 8080 else originalPort
-        // Prefer TLS :8443 for this host, then a ws:// form. Keep a wss:// on
-        // the URL's own port ONLY when that URL was already TLS (wss://).
-        out.add("wss://$host:8443$path")
-        out.add("ws://$host:$plainPort$path")
-        if (originalScheme == "wss" && originalPort != 8443) {
-            out.add("wss://$host:$originalPort$path")
+        val wssPorts = LinkedHashSet<Int>()
+        if (originalScheme == "wss" && originalPort in setOf(443, 8443)) {
+            wssPorts.add(originalPort)
         }
+        wssPorts.add(preferredTlsPort)
+        wssPorts.add(8443) // direct-signaling TLS fallback for all hosts
+        wssPorts.forEach { port -> out.add("wss://$host:$port$path") }
+        out.add("ws://$host:$plainPort$path")
     }
 
     try {
@@ -170,21 +178,25 @@ fun signalingUrlCandidates(
         val path = u.rawPath?.takeIf { it.isNotBlank() } ?: ""
         val scheme = u.scheme ?: "ws"
 
-        candidates(host, port, scheme, path)
-        if (serverIp.isNotBlank()) candidates(serverIp, port, scheme, path)
+        // Primary domain is fronted by the nginx reverse proxy on standard 443.
+        candidates(host, port, scheme, path, preferredTlsPort = 443)
+        // The raw server IP over TLS is served either by nginx (443) or the
+        // direct signaling TLS listener (8443); try 443 then 8443.
+        if (serverIp.isNotBlank()) candidates(serverIp, port, scheme, path, preferredTlsPort = 443)
 
-        // Backup/alternate endpoints from GitHub Secrets.
+        // Backup/alternate endpoints from GitHub Secrets (e.g. a secondary that
+        // only serves WSS on 8443) — prefer their own TLS port / 8443 first.
         if (serverUrlAlt.isNotBlank()) {
             try {
                 val av = URI(serverUrlAlt)
                 val aside = av.host ?: serverUrlAlt
                 val aport = if (av.port in 1..65535) av.port else 8080
-                candidates(aside, aport, av.scheme ?: "ws", av.rawPath?.takeIf { it.isNotBlank() } ?: "")
+                candidates(aside, aport, av.scheme ?: "ws", av.rawPath?.takeIf { it.isNotBlank() } ?: "", preferredTlsPort = 8443)
             } catch (e2: Exception) {
                 out.add(serverUrlAlt)
             }
         }
-        if (serverIpAlt.isNotBlank()) candidates(serverIpAlt, port, scheme, path)
+        if (serverIpAlt.isNotBlank()) candidates(serverIpAlt, port, scheme, path, preferredTlsPort = 8443)
     } catch (e: Exception) {
         // fall back to only the primary (plus any alternate URL that parsed)
         out.add(primary)

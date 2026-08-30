@@ -22,10 +22,14 @@ class ServiceLocatorTest {
             serverUrlAlt = "",
             serverIpAlt = "",
         )
-        // TLS on the TLS port first, then the plain form — never wss://:8080.
+        // Domain fronted by nginx prefers standard 443, then TLS 8443, then the
+        // plain form — never wss://:8080. The direct IP host also tries 443 then
+        // 8443 (nginx serves both the domain and its IP).
         assertEquals(listOf(
+            "wss://turn.robrion.net:443",
             "wss://turn.robrion.net:8443",
             "ws://turn.robrion.net:8080",
+            "wss://203.0.113.10:443",
             "wss://203.0.113.10:8443",
             "ws://203.0.113.10:8080",
         ), urls)

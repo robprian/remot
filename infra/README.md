@@ -136,8 +136,9 @@ In `infra/turnserver.conf` replace:
 
 | Port | Protocol | Purpose |
 | --- | --- | --- |
+| 443 | TCP | Signaling / WebSocket (**wss** via Nginx reverse proxy, standard TLS) |
 | 8080 | TCP | Signaling / WebSocket (cleartext ws fallback) |
-| 8443 | TCP | Signaling / WebSocket (**wss**, TLS) |
+| 8443 | TCP | Signaling / WebSocket (**wss**, TLS; direct, fallback) |
 | 3478 | UDP + TCP | STUN + TURN |
 | 5349 | TCP | TURNS (TLS) |
 | 49152–65535 | UDP | TURN relay allocations |
@@ -291,8 +292,45 @@ success.
 The signaling server can serve **both** a cleartext WebSocket (default `:8080`)
 **and** a TLS WebSocket (`:8443`) from the same process — set `WSS_ENABLED=true`,
 `WSS_CERT_PATH` / `WSS_KEY_PATH` to a cert/key PEM pair, then open `8443` in the
-security group. The app always **prefers the wss://:8443** endpoint for every
-host and falls back to ws://:8080 only if TLS is unreachable.
+security group. The app always **prefers a wss://** endpoint for every host
+(standard **443** through the reverse proxy, then `:8443` direct) and falls
+back to ws://:8080 only if no TLS path is reachable.
+
+#### Reverse proxy on standard port 443 (recommended production)
+
+To let devices use `wss://turn.robrion.net` on the universally-open **443/TCP**
+(no non-standard 8443 needed), terminate TLS at an **Nginx reverse proxy** and
+proxy the WebSocket upstream to the signaling broker on `127.0.0.1:8080`:
+
+```nginx
+# /etc/nginx/conf.d/remot-signaling.conf
+server {
+    listen 443 ssl http2;
+    server_name turn.robrion.net;
+
+    ssl_certificate     /etc/remot/remot-cert.pem;
+    ssl_certificate_key /etc/remot/remot-key.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade     $http_upgrade;
+        proxy_set_header Connection  "upgrade";
+        proxy_set_header Host        $host;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+        proxy_buffering off;
+    }
+}
+```
+
+Use the **same cert the app pins** (`res/raw/remot_ca.pem`) — a public Let's
+Encrypt cert is fine for the primary too, but the reverse proxy on 443 must
+terminate with a cert the app accepts (system store unioned with the pinned
+Remot CA). WebSocket `Upgrade` / `Connection` headers are required; verify with
+`ss -lntp` that nginx owns `0.0.0.0:443` and that the signaling broker is still
+reachable at `127.0.0.1:8080`. Verify externally with a full register + ping/pong
+against `wss://<hostname>:443` (`scripts/` relay/wss handshake tooling).
 
 Two certificate options:
 

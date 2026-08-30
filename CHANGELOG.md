@@ -12,6 +12,52 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C004P11 — 2026-08-30
+
+### Summary
+
+Terminates signaling TLS at an **Nginx reverse proxy on standard port 443**, so
+`wss://turn.robrion.net` works over the universally open 443/TCP without
+requiring the non-standard 8443 port. The primary endpoint is now
+`wss://turn.robrion.net:443`; the app prefers 443 for domain/IP hosts and keeps
+8443 + `ws://:8080` as TLS/legacy fallbacks (secondary server still serves WSS
+on 8443 only).
+
+### Added (infrastructure, deployed live on the primary)
+
+- **Nginx reverse proxy on 443:** terminates TLS with the Remot-CA leaf cert
+  (`DNS:turn.robrion.net, IP:xx`), HTTP/2, WebSocket `Upgrade`/`Connection`
+  headers, and proxies to `127.0.0.1:8080` (the signaling broker). Firewall
+  443/TCP already open; verified end-to-end from an external vantage:
+  `wss://turn.robrion.net:443` → CONNECTED → REGISTERED → HEARTBEAT ping/pong
+  using the app-pinned Remot CA.
+- The cert is the same Remot-CA leaf the app pins (`res/raw/remot_ca.pem`), so
+  normal Android hostname validation applies — no TLS bypass anywhere.
+
+### Changed
+
+- **`signalingUrlCandidates` now prefers standard 443 first** for the domain
+  and its direct IP (`wss://turn.robrion.net:443` → `wss://…:8443` →
+  `ws://…:8080`), because nginx proxies both the domain and the raw IP on 443.
+  Alternate/backup endpoints still try `wss://:8443` first (the secondary only
+  serves WSS on 8443). A `wss://` form is never emitted for a plain `ws://`
+  port.
+- `SIGNALING_URL` secret is now `wss://turn.robrion.net:443`.
+- Bumped production version to **V2C004P11** (versionCode 200411).
+
+### Added (tests)
+
+- Unit test assertions updated for the new 443-first ordering (`ServiceLocatorTest`).
+
+### Infrastructure
+
+- `infra/check-ports.sh` already covers 443; verified 443/TCP external OPEN on
+  the primary, and the secondary serves 443 closed / WSS on 8443 (retained as
+  fallback).
+
+---
+
+---
 ## V2C004P10 — 2026-08-30
 
 ### Summary
