@@ -58,17 +58,21 @@ class SignalingClientTest {
 
     // ---------- heartbeat state machine (HeartbeatTracker) ----------
 
-    /** Fake scheduler that records the longest-delay runnable still due. */
-    private class FakeScheduler {
-        private val map = mutableMapOf<Runnable, Long>()
-        private var clock = 0L
+    /**
+     * Single source of truth for time: [now] is what the tracker's injected clock
+     * reads, and [advanceTo] moves that same clock forward (running any pending
+     * timers). Keeping one clock for both avoids the classic fake-clock bug of
+     * the injected nowMs drifting from the scheduler's internal time.
+     */
+    private class FakeClock {
+        var now = 0L
 
-        fun schedule(r: Runnable, delay: Long) { map[r] = clock + delay }
+        private val map = mutableMapOf<Runnable, Long>()
+        fun schedule(r: Runnable, delay: Long) { map[r] = now + delay }
         fun cancel(r: Runnable) { map.remove(r) }
 
-        /** Advance the clock and run every runnable whose delay has elapsed. */
         fun advanceTo(t: Long) {
-            clock = t
+            now = t
             val due = map.filter { it.value <= t }.keys.toList()
             map.keys.retainAll(map.keys - due.toSet())
             due.forEach { r -> r.run() }
@@ -76,54 +80,48 @@ class SignalingClientTest {
         val pendingCount: Int get() = map.size
     }
 
-    /** Builds a tracker backed by a controllable clock + [FakeScheduler]. */
-    private fun tracked(
-        now: () -> Long,
-        sched: FakeScheduler,
-    ) = HeartbeatTracker(nowMs = now, schedule = sched::schedule, cancel = sched::cancel)
+    /** Builds a tracker backed by a controllable [FakeClock]. */
+    private fun tracked(c: FakeClock) =
+        HeartbeatTracker(nowMs = { c.now }, schedule = c::schedule, cancel = c::cancel)
 
     @Test
     fun heartbeatStartSchedulesFirstPing() {
-        val sched = FakeScheduler()
-        var clock = 1000L
-        val hb = tracked(now = { clock }, sched)
+        val c = FakeClock().apply { now = 1000L }
+        val hb = tracked(c)
 
         assertFalse("heartbeat must not be running before start()", hb.started)
         hb.start()
         assertTrue(hb.started)
         // First ping scheduled (15 s).
-        assertEquals(1, sched.pendingCount)
+        assertEquals(1, c.pendingCount)
     }
 
     @Test
     fun heartbeatSendsPingAndTimesOutWithoutPong() {
-        val sched = FakeScheduler()
-        var clock = 1000L
-        val hb = tracked(now = { clock }, sched)
+        val c = FakeClock().apply { now = 1000L }
+        val hb = tracked(c)
         val pings = mutableListOf<Long>()
         hb.onPing = { ts -> pings.add(ts) }
 
         hb.start()
-        // Nominal first ping at t=16000.
-        sched.advanceTo(16_000)
-        assertEquals(1, pings.size)
+        // Nominal first ping at t = 1000 + 15000 = 16000.
+        c.advanceTo(16_000)
+        assertEquals("first ping scheduled for 16s", 1, pings.size)
         assertEquals(16_000L, pings[0])
         // No pong → advance past the 10 s pong timeout → count a miss.
-        sched.advanceTo(16_000 + HeartbeatTracker.PONG_TIMEOUT_MS)
+        c.advanceTo(16_000 + HeartbeatTracker.PONG_TIMEOUT_MS)
         assertEquals("one missed pong without a pong", 1, hb.missedPongs)
     }
 
     @Test
     fun pongCancelsTimeoutAndMeasuresLatency() {
-        val sched = FakeScheduler()
-        var clock = 10_000L
-        val hb = tracked(now = { clock }, sched)
-        hb.start() // schedules first ping at clock + 15 s = 25_000
+        val c = FakeClock().apply { now = 10_000L }
+        val hb = tracked(c)
+        hb.start() // schedules first ping at now + 15 s = 25_000
 
-        clock = 25_000L // ping fires here: pingSentAt = 25_000
-        sched.advanceTo(25_000)
+        c.advanceTo(25_000) // ping fires here: pingSentAt = 25_000
 
-        clock = 25_030L // pong arrives 30 ms after the ping was sent
+        c.advanceTo(25_030) // pong arrives 30 ms after the ping was sent
         hb.onPong()
         assertEquals("measured RTT should be 30 ms", 30L, hb.latencyMs ?: -1L)
         assertEquals("a successful pong resets misses", 0, hb.missedPongs)
@@ -131,9 +129,8 @@ class SignalingClientTest {
 
     @Test
     fun threeMissedPongsTriggersDead() {
-        val sched = FakeScheduler()
-        var clock = 1000L
-        val hb = tracked(now = { clock }, sched)
+        val c = FakeClock().apply { now = 1000L }
+        val hb = tracked(c)
         var deadCalls = 0
         hb.onDead = { deadCalls++ }
 
@@ -143,9 +140,8 @@ class SignalingClientTest {
         // 3 ping cycles, never answering a pong.
         repeat(HeartbeatTracker.MAX_MISSED) { i ->
             val pingAt = 1000L + 15_000L * (i + 1)
-            clock = pingAt
-            sched.advanceTo(pingAt)            // ping fires
-            sched.advanceTo(pingAt + HeartbeatTracker.PONG_TIMEOUT_MS) // miss
+            c.advanceTo(pingAt)            // ping fires
+            c.advanceTo(pingAt + HeartbeatTracker.PONG_TIMEOUT_MS) // miss
         }
         assertEquals("onDead must fire after MAX_MISSED missed pongs", 1, deadCalls)
         assertFalse("heartbeat must stop after death", hb.started)
@@ -153,21 +149,20 @@ class SignalingClientTest {
 
     @Test
     fun stopCancelsPendingTimers() {
-        val sched = FakeScheduler()
-        var clock = 1000L
-        val hb = tracked(now = { clock }, sched)
+        val c = FakeClock().apply { now = 1000L }
+        val hb = tracked(c)
         var pings = 0
         hb.onPing = { pings++ }
 
         hb.start()
-        sched.advanceTo(16_000)
+        c.advanceTo(16_000)
         assertTrue(pings > 0)
         hb.stop()
         assertFalse("stop() must clear the started flag", hb.started)
         assertNull("stop() resets measured latency", hb.latencyMs)
         // Advancing time after stop must not produce further pings (timers cancelled).
         val before = pings
-        sched.advanceTo(100_000)
+        c.advanceTo(100_000)
         assertEquals("no pings after stop", before, pings)
     }
 }
