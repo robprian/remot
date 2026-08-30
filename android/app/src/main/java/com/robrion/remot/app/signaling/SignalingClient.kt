@@ -65,7 +65,22 @@ class SignalingClient(
     @Volatile var isAuthFailed = false; private set
 
     /** Last measured signaling ping/pong round-trip (app-level heartbeat), ms. */
-    @Volatile var signalingLatencyMs: Long? = null; private set
+    val signalingLatencyMs: Long? get() = heartbeat.latencyMs
+
+    /** Pure heartbeat state machine — used by [signalingLatencyMs] and tests. */
+    private val heartbeat = HeartbeatTracker(
+        nowMs = { System.currentTimeMillis() },
+        schedule = { r, delay -> main.postDelayed(r, delay) },
+        cancel = { r -> main.removeCallbacks(r) },
+    ).apply {
+        onPing = { ts -> send(JSONObject().put("type", "ping").put("ts", ts)) }
+        onDead = {
+            SignalingDebugLog.record(signalingUrl, "HEARTBEAT-FAILED", "$missedPongs missed pongs")
+            lastConnectError = "heartbeat timeout ($missedPongs missed pongs) @ $signalingUrl"
+            ws?.cancel()
+            ws = null
+        }
+    }
 
     /** The endpoint this client is CURRENTLY using — surfaced in Diagnostics. */
     val signalingUrl: String get() = urls[urlIndex % urls.size]
@@ -161,15 +176,6 @@ class SignalingClient(
     private var closedByUser = false
     private val main = Handler(Looper.getMainLooper())
 
-    // App-level heartbeat: starts ONLY after registration succeeds, so an
-    // unauthenticated socket never pings. One timer per connection; cancelled
-    // on close / auth failure / reconnect.
-    private val heartbeat = Runnable { ping() }
-    private var heartbeatStarted = false
-    private var pendingPong: Runnable? = null
-    private var missedPongs = 0
-    private var pingSentAt = 0L
-
     fun connect() {
         closedByUser = false
         isAuthFailed = false
@@ -257,7 +263,7 @@ class SignalingClient(
                 listener.onRegistered(m.optJSONArray("iceServers") ?: JSONArray())
                 startHeartbeat()
             }
-            "pong" -> onPong()
+            "pong" -> heartbeat.onPong()
             "register-failed" -> {
                 val reason = m.optString("reason", "unknown")
                 // Registration was rejected: the socket is dead. Close it ourselves
@@ -323,61 +329,20 @@ class SignalingClient(
      * (the root cause of "Signaling unreachable / auth-failed" on device).
      */
     fun sendAuthResponse(to: String, nonceB64: String, sigB64: String) {
-        val o = JSONObject()
-            .put("type", "auth-response")
-            .put("nonce", nonceB64)
-            .put("sig", sigB64)
-        if (to.isNotBlank()) o.put("to", to) // blank = server-direct registration
-        send(o)
+        send(SignalingMessages.authResponse(to, nonceB64, sigB64))
     }
 
     // ---- app-level heartbeat (runs ONLY after registration) ----
 
     private fun startHeartbeat() {
-        if (heartbeatStarted) return
-        heartbeatStarted = true
-        missedPongs = 0
-        signalingLatencyMs = null
-        SignalingDebugLog.record(signalingUrl, "HEARTBEAT-START")
-        main.postDelayed(heartbeat, 15_000)
+        if (!heartbeat.started) {
+            SignalingDebugLog.record(signalingUrl, "HEARTBEAT-START")
+        }
+        heartbeat.start()
     }
 
     private fun stopHeartbeat() {
-        heartbeatStarted = false
-        main.removeCallbacks(heartbeat)
-        pendingPong?.let { main.removeCallbacks(it) }
-        pendingPong = null
-        missedPongs = 0
-        pingSentAt = 0L
-    }
-
-    private fun ping() {
-        if (!heartbeatStarted || !isConnected || !isRegistered) return
-        pingSentAt = System.currentTimeMillis()
-        send(JSONObject().put("type", "ping").put("ts", pingSentAt))
-        val timeout = Runnable {
-            missedPongs++
-            pendingPong = null
-            if (missedPongs >= 3) {
-                // Connection is alive at TCP level but the server is not answering
-                // application pings — treat as dead and reconnect.
-                SignalingDebugLog.record(signalingUrl, "HEARTBEAT-FAILED", "$missedPongs missed pongs")
-                lastConnectError = "heartbeat timeout ($missedPongs missed pongs) @ $signalingUrl"
-                ws?.cancel()
-                ws = null
-            }
-        }
-        pendingPong = timeout
-        main.postDelayed(timeout, 10_000)
-        main.postDelayed(heartbeat, 15_000)
-    }
-
-    private fun onPong() {
-        pendingPong?.let { main.removeCallbacks(it) }
-        pendingPong = null
-        missedPongs = 0
-        if (pingSentAt > 0) signalingLatencyMs = System.currentTimeMillis() - pingSentAt
-        pingSentAt = 0L
+        heartbeat.stop()
     }
 
     fun clearRegistrationState() {

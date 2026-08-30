@@ -50,9 +50,9 @@ android {
         minSdk = 25
         targetSdk = 35
         // V/C/P production versioning (see docs/VERSIONING.md):
-        // versionCode = V*100000 + C*100 + P  →  V2C004P06 = 200406
-        versionCode = 200406
-        versionName = "V2C004P06"
+        // versionCode = V*100000 + C*100 + P  →  V2C004P07 = 200407
+        versionCode = 200407
+        versionName = "V2C004P07"
 
         // Signaling endpoint, overridable at build time. On CI it is supplied via
         // the SIGNALING_URL secret; locally it defaults to a build-time property.
@@ -203,4 +203,7 @@ dependencies {
 
     // Unit tests
     testImplementation("junit:junit:4.13.2")
+    // Real org.json for the JVM unit tests (SignalingMessages builds JSONObject;
+    // the android.jar stub is unusable with isReturnDefaultValues=true).
+    testImplementation("org.json:json:20231013")
 }

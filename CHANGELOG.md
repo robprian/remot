@@ -12,6 +12,39 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C004P07 — 2026-08-30
+
+### Summary
+
+Refactors the signaling client's two test-critical behaviors into pure JVM
+classes and pins them with unit tests: the registration `auth-response` nonce
+echo (the V2C004P05 regression) and the app-level heartbeat state machine
+(start-only-after-registration, real RTT measurement, dead-connection
+threshold). No runtime behavior changes for devices — the extracted
+`HeartbeatTracker` mirrors the previous inline logic exactly.
+
+### Changed
+
+- Bumped production version to **V2C004P07** (versionCode 200407).
+
+### Added
+
+- **`HeartbeatTracker`** (`signaling/HeartbeatTracker.kt`) — pure JVM heartbeat
+  state machine with an injected clock + scheduler: 15 s ping interval, 10 s
+  pong timeout, real `latencyMs` RTT on pong, and `onDead` after 3 consecutive
+  missed pongs. No Android/Hander dependency, so it is fully unit-testable.
+- **`SignalingMessages.authResponse()`** (`signaling/SignalingMessages.kt`) —
+  pure builder that MUST echo the challenge `nonce` verbatim and omit `to` for
+  server-direct registration; extracted from `SignalingClient.sendAuthResponse`.
+- **`SignalingClientTest`** — JVM unit tests covering the nonce echo (verbatim
+  round-trip, `to` only for peer-relay) and the heartbeat state machine
+  (start schedules ping, miss without pong, pong resets + measures RTT, dead
+  after 3 misses, stop cancels all timers) using a fake clock + scheduler.
+- `testImplementation("org.json:json:20231013")` so the JVM tests can build
+  and assert `JSONObject` (the android.jar stub is unusable with
+  `isReturnDefaultValues=true`).
+
+---
 ## V2C004P06 — 2026-08-30
 
 ### Summary
@@ -806,3 +839,4 @@ the full documentation and release pipeline.
 - Android: `SignalingClient` presents `DeviceIdentity.publicKeyB64()` on
   register and stops auto-reconnecting after a permanent registration rejection.
 - Input: `long-press` maps to a 600 ms gesture stroke on the host.
+
