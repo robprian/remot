@@ -119,49 +119,76 @@ object ServiceLocator : SignalingClient.Listener {
      * outage without hardcoding any address in source (addresses come from
      * GitHub Secrets at build time; the TLS path trusts the embedded Remot CA
      * for self-signed backup servers and the system store for Let's Encrypt).
+     *
+     * A `wss://` form is NEVER emitted for a port that only serves plain `ws://`
+     * (e.g. :8080) — the server would answer "Unable to parse TLS packet header".
+     * A `wss://<host>:<originalPort>` is only kept when the URL itself was `wss`.
      */
-    private fun signalingUrlCandidates(primary: String): List<String> {
-        val out = LinkedHashSet<String>()
-        val ipAlt = BuildConfig.SERVER_IP_ALT
-        val urlAlt = BuildConfig.SERVER_URL_ALT
-        val ip = BuildConfig.SERVER_IP
+    private fun signalingUrlCandidates(primary: String): List<String> =
+        signalingUrlCandidates(
+            primary = primary,
+            serverIp = BuildConfig.SERVER_IP,
+            serverUrlAlt = BuildConfig.SERVER_URL_ALT,
+            serverIpAlt = BuildConfig.SERVER_IP_ALT,
+        )
+}
 
-        /** Adds wss:// on the TLS port (8443), then ws:// on the plain port. */
-        fun candidates(host: String, originalPort: Int, path: String) {
-            val plainPort = if (originalPort == 80 || originalPort == 443 || originalPort == 8443) 8080 else originalPort
-            // Prefer TLS :8443 for this host, then a ws:// form, then any wss:// on
-            // the URL's own port (harmless if it equals 8443).
-            out.add("wss://$host:8443$path")
-            out.add("ws://$host:$plainPort$path")
-            if (originalPort != 8443) out.add("wss://$host:$originalPort$path")
+/**
+ * Pure endpoint-list builder (extracted for unit tests).
+ *
+ * Returns a de-duplicated, ordered list of signaling URLs the client tries in
+ * turn. TLS `wss://:8443` always comes first for every host; the plain `ws://`
+ * form is a legacy fallback. A `wss://<host>:<originalPort>` entry is only kept
+ * when the URL itself was already TLS (wss://) — never for a plain ws:// URL,
+ * since TLS against a plain listener fails with "Unable to parse TLS packet
+ * header".
+ */
+fun signalingUrlCandidates(
+    primary: String,
+    serverIp: String,
+    serverUrlAlt: String,
+    serverIpAlt: String,
+): List<String> {
+    val out = LinkedHashSet<String>()
+
+    /** Adds wss:// on the TLS port (8443), then ws:// on the plain port. */
+    fun candidates(host: String, originalPort: Int, originalScheme: String, path: String) {
+        val plainPort = if (originalPort == 80 || originalPort == 443 || originalPort == 8443) 8080 else originalPort
+        // Prefer TLS :8443 for this host, then a ws:// form. Keep a wss:// on
+        // the URL's own port ONLY when that URL was already TLS (wss://).
+        out.add("wss://$host:8443$path")
+        out.add("ws://$host:$plainPort$path")
+        if (originalScheme == "wss" && originalPort != 8443) {
+            out.add("wss://$host:$originalPort$path")
         }
-
-        try {
-            val u = URI(primary)
-            val host = u.host ?: return out.toList()
-            val port = if (u.port in 1..65535) u.port else if (u.scheme == "wss") 443 else 80
-            val path = u.rawPath?.takeIf { it.isNotBlank() } ?: ""
-
-            candidates(host, port, path)
-            if (ip.isNotBlank()) candidates(ip, port, path)
-
-            // Backup/alternate endpoints from GitHub Secrets.
-            if (urlAlt.isNotBlank()) {
-                try {
-                    val av = URI(urlAlt)
-                    val aside = av.host ?: urlAlt
-                    val aport = if (av.port in 1..65535) av.port else 8080
-                    candidates(aside, aport, av.rawPath?.takeIf { it.isNotBlank() } ?: "")
-                } catch (e2: Exception) {
-                    out.add(urlAlt)
-                }
-            }
-            if (ipAlt.isNotBlank()) candidates(ipAlt, port, path)
-        } catch (e: Exception) {
-            // fall back to only the primary (plus any alternate URL that parsed)
-            out.add(primary)
-            if (urlAlt.isNotBlank()) out.add(urlAlt)
-        }
-        return out.toList()
     }
+
+    try {
+        val u = URI(primary)
+        val host = u.host ?: return out.toList()
+        val port = if (u.port in 1..65535) u.port else if (u.scheme == "wss") 443 else 80
+        val path = u.rawPath?.takeIf { it.isNotBlank() } ?: ""
+        val scheme = u.scheme ?: "ws"
+
+        candidates(host, port, scheme, path)
+        if (serverIp.isNotBlank()) candidates(serverIp, port, scheme, path)
+
+        // Backup/alternate endpoints from GitHub Secrets.
+        if (serverUrlAlt.isNotBlank()) {
+            try {
+                val av = URI(serverUrlAlt)
+                val aside = av.host ?: serverUrlAlt
+                val aport = if (av.port in 1..65535) av.port else 8080
+                candidates(aside, aport, av.scheme ?: "ws", av.rawPath?.takeIf { it.isNotBlank() } ?: "")
+            } catch (e2: Exception) {
+                out.add(serverUrlAlt)
+            }
+        }
+        if (serverIpAlt.isNotBlank()) candidates(serverIpAlt, port, scheme, path)
+    } catch (e: Exception) {
+        // fall back to only the primary (plus any alternate URL that parsed)
+        out.add(primary)
+        if (serverUrlAlt.isNotBlank()) out.add(serverUrlAlt)
+    }
+    return out.toList()
 }

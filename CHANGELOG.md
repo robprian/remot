@@ -12,6 +12,43 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C004P10 — 2026-08-30
+
+### Summary
+
+Finalizes the production **WSS** signaling endpoint. The secure channel is now
+the domain-based primary (`wss://turn.robrion.net:8443`, certificate-verified),
+and the app no longer attempts TLS against plain-WebSocket ports — the previous
+build tried `wss://<host>:8080`, which the server rejects with *"Unable to
+parse TLS packet header"* and wasted a reconnect cycle.
+
+### Fixed
+
+- Removed the invalid fallback that emitted `wss://<host>:8080` when the
+  configured URL was plain `ws://` — TLS is never attempted against a
+  cleartext-only listener; a `wss://<host>:<port>` form is only kept when the
+  URL itself was already `wss` (e.g. `:443`).
+- Signaling now prefers `wss://<host>:8443` first for every host, then the
+  legacy `ws://:8080` form, then the alternate hosts — so production always
+  uses the secure channel when reachable and only falls back to cleartext
+  when no TLS path exists.
+- Production primary endpoint is now the domain `wss://turn.robrion.net:8443`
+  (set via the `SIGNALING_URL` secret) instead of a raw IP; the certificate
+  SAN covers the domain, so normal Android hostname validation applies.
+
+### Added
+
+- Unit tests for the endpoint list builder: `wss`-first priority, no
+  `wss://` on plain ports, `:443` retention, alternate-host ordering, and
+  de-duplication.
+
+### Infrastructure
+
+- `infra/check-ports.sh` now also verifies TCP **8443** (wss) reachability.
+
+---
+
+---
 ## V2C004P09 — 2026-08-30
 
 ### Summary
