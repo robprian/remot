@@ -3,6 +3,7 @@ package com.robrion.remot.webrtc
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
+import android.util.Log
 import com.robrion.remot.identity.DeviceIdentity
 import com.robrion.remot.crypto.Crypto
 import com.robrion.remot.signaling.SignalingClient
@@ -70,6 +71,11 @@ class RtcSession(
             override fun onIceConnectionChange(s: PeerConnection.IceConnectionState) = handleIceState(s)
             override fun onSignalingChange(s: PeerConnection.SignalingState) {}
             override fun onIceGatheringChange(s: PeerConnection.IceGatheringState) {
+                Log.i("RtcSession", "[ICE-GATHERING] " + when (s) {
+                    PeerConnection.IceGatheringState.NEW -> "NEW"
+                    PeerConnection.IceGatheringState.GATHERING -> "GATHERING"
+                    PeerConnection.IceGatheringState.COMPLETE -> "COMPLETE"
+                })
                 if (s == PeerConnection.IceGatheringState.COMPLETE) queryIceRoute()
             }
             override fun onIceCandidatesRemoved(c: Array<out IceCandidate>) {}
@@ -170,6 +176,16 @@ class RtcSession(
 
     // ---------- recovery ----------
     private fun handleIceState(s: PeerConnection.IceConnectionState) {
+        fun label(st: PeerConnection.IceConnectionState) = when (st) {
+            PeerConnection.IceConnectionState.NEW -> "NEW"
+            PeerConnection.IceConnectionState.CHECKING -> "CHECKING"
+            PeerConnection.IceConnectionState.CONNECTED -> "CONNECTED"
+            PeerConnection.IceConnectionState.COMPLETED -> "COMPLETED"
+            PeerConnection.IceConnectionState.FAILED -> "FAILED"
+            PeerConnection.IceConnectionState.DISCONNECTED -> "DISCONNECTED"
+            PeerConnection.IceConnectionState.CLOSED -> "CLOSED"
+        }
+        Log.i("RtcSession", "[WEBRTC] " + label(s))
         when (s) {
             PeerConnection.IceConnectionState.CONNECTED,
             PeerConnection.IceConnectionState.COMPLETED -> onConnected()
@@ -203,6 +219,9 @@ class RtcSession(
                     val type = extractSelectedCandidateType(report)
                     if (type != null && type != iceRoute) {
                         iceRoute = type
+                        // Log only the candidate TYPE (host/srflx/relay), never an IP,
+                        // so diagnostics show whether TURN relay is actually in use.
+                        Log.i("RtcSession", "[ICE-CANDIDATE] type=$type")
                         onIceRoute?.invoke(type)
                     }
                 }

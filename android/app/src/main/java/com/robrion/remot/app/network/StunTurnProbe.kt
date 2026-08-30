@@ -1,10 +1,14 @@
 package com.robrion.remot.network
 
 import android.util.Log
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.Socket
+import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.nio.ByteBuffer
 import java.security.MessageDigest
@@ -23,6 +27,8 @@ data class StunTurnResult(
     /** Measured RTT of the last successful TURN Allocate (or STUN if only STUN worked), ms. */
     val latencyMs: Long? = null,
     val error: String? = null,
+    /** Transport the successful reply arrived over: "udp" | "tcp" | null. */
+    val transport: String? = null,
 ) {
     companion object {
         val unknown = StunTurnResult(dnsOk = false, stunOk = false, turnOk = false, error = "not checked")
@@ -34,11 +40,17 @@ data class StunTurnResult(
  * health checks. It performs:
  *
  *   1. DNS resolution of the TURN hostname.
- *   2. A real STUN Binding request/response over UDP (proves the server speaks
- *      STUN and is reachable) — measured RTT.
+ *   2. A real STUN Binding request/response (proves the server speaks STUN and
+ *      is reachable) — measured RTT.
  *   3. A real TURN Allocate handshake (401 realm/nonce challenge then
  *      authenticated Allocate with the short-lived credentials the signaling
  *      server issued) — proves the TURN relay actually accepts allocations.
+ *
+ * It tries **UDP first, then falls back to TCP**. Many mobile/carrier networks
+ * throttle or block UDP to arbitrary ports while TCP works, which is the most
+ * common cause of "STUN/TURN unreachable" in the app even though the server is
+ * perfectly healthy; since coturn listens on 3478 TCP for WebRTC, probing over
+ * TCP gives an honest online answer where UDP alone would time out.
  *
  * Everything runs on the caller's (background) dispatcher. Never on the main
  * thread. No secrets are logged.
@@ -60,21 +72,32 @@ class StunTurnProbe(
             return StunTurnResult(dnsOk = false, stunOk = false, turnOk = false, error = "dns")
         }
 
-        val socket = DatagramSocket()
-        try {
-            socket.soTimeout = timeoutMs.toInt()
-            socket.connect(InetSocketAddress(address, port))
+        val udp = probeTransport(UdpTransport(address, port), timeoutMs)
+        // Only fall back to TCP when UDP genuinely failed at the STUN layer
+        // (timeout / stun). If UDP already answered STUN+TURN, or it merely
+        // lacked credentials, there is nothing to retry TCP for.
+        if (udp.stunOk || udp.error in setOf("no-credentials", "dns")) return udp
+        val tcp = probeTransport(TcpTransport(address, port), timeoutMs)
+        // Prefer the TCP result only if it actually moved the needle; otherwise
+        // keep the original UDP detail (e.g. its specific timeout) for diagnostics.
+        return if (tcp.stunOk || tcp.turnOk) tcp else udp
+    }
 
+    /** One probe run over a concrete transport (UDP datagram or TCP stream). */
+    private fun probeTransport(io: StunTurnIo, timeoutMs: Long): StunTurnResult {
+        if (!io.open(timeoutMs)) {
+            return StunTurnResult(dnsOk = true, stunOk = false, turnOk = false, transport = io.name(), error = "timeout")
+        }
+        return try {
             // --- STUN binding ---
             val bindingStart = System.nanoTime()
             val bindingTx = randomTransactionId()
             val bindingReq = buildBindingRequest(bindingTx)
-            socket.send(DatagramPacket(bindingReq, bindingReq.size))
-            val resp = receive(socket)
-            val stunOk = parseBindingResponse(resp, bindingTx)
+            val resp = io.exchange(bindingReq, timeoutMs)
+            val stunOk = resp != null && parseBindingResponse(resp, bindingTx)
             if (!stunOk) {
                 return StunTurnResult(
-                    dnsOk = true, stunOk = false, turnOk = false,
+                    dnsOk = true, stunOk = false, turnOk = false, transport = io.name(),
                     error = "stun", latencyMs = null
                 )
             }
@@ -85,34 +108,33 @@ class StunTurnProbe(
                 // No credentials available (server not reachable / not registered):
                 // STUN worked, TURN can't be authenticated → report honestly.
                 return StunTurnResult(
-                    dnsOk = true, stunOk = true, turnOk = false,
+                    dnsOk = true, stunOk = true, turnOk = false, transport = io.name(),
                     latencyMs = stunRttMs, error = "no-credentials"
                 )
             }
             val turnStart = System.nanoTime()
             val turnTx = randomTransactionId()
-            val turnOk = allocate(socket, turnTx)
+            val turnOk = allocate(io, turnTx, timeoutMs)
             val turnRttMs = if (turnOk) (System.nanoTime() - turnStart) / 1_000_000 else null
             return StunTurnResult(
-                dnsOk = true, stunOk = true, turnOk = turnOk,
+                dnsOk = true, stunOk = true, turnOk = turnOk, transport = io.name(),
                 latencyMs = turnRttMs ?: stunRttMs,
                 error = if (turnOk) null else "turn"
             )
         } catch (e: SocketTimeoutException) {
-            return StunTurnResult(dnsOk = true, stunOk = false, turnOk = false, error = "timeout")
+            StunTurnResult(dnsOk = true, stunOk = false, turnOk = false, transport = io.name(), error = "timeout")
         } catch (e: Exception) {
-            Log.w(logTag, "probe failed: ${e.message}")
-            return StunTurnResult(dnsOk = true, stunOk = false, turnOk = false, error = e.message)
+            Log.w(logTag, "probe(${io.name()}) failed: ${e.message}")
+            StunTurnResult(dnsOk = true, stunOk = false, turnOk = false, transport = io.name(), error = e.message)
         } finally {
-            runCatching { socket.close() }
+            io.close()
         }
     }
 
     /**
-     * Resolves the host preferring IPv4. Some TURN hostnames publish AAAA
-     * (IPv6) records that aren't routable from the device's network (e.g.
-     * turn.robrion.net resolves to IPv6 first, then IPv4); preferring the IPv4
-     * address avoids a UDP probe that times out or aborts on the IPv6 leg.
+     * Resolves the host preferring IPv4. Some TURN hostnames publish AAAA (IPv6)
+     * records that aren't routable from the device's network; preferring the
+     * IPv4 address avoids a probe that times out on the IPv6 leg.
      */
     private fun resolveIpv4First(): InetAddress {
         val all = InetAddress.getAllByName(host)
@@ -132,13 +154,6 @@ class StunTurnProbe(
         header.putInt(MAGIC_COOKIE)
         header.put(txId)
         return header.array()
-    }
-
-    private fun receive(socket: DatagramSocket): ByteArray {
-        val buf = ByteArray(1500)
-        val pkt = DatagramPacket(buf, buf.size)
-        socket.receive(pkt)
-        return pkt.data.copyOf(pkt.length)
     }
 
     /** Parses a STUN Binding response; returns true when the transaction matches and it's a success response. */
@@ -161,11 +176,10 @@ class StunTurnProbe(
      *   request (no auth) → 401 with REALM + NONCE → authenticated request with
      *   USERNAME + MESSAGE-INTEGRITY → 0x0103 success (XOR-RELAYED-ADDRESS).
      */
-    private fun allocate(socket: DatagramSocket, txId: ByteArray): Boolean {
+    private fun allocate(io: StunTurnIo, txId: ByteArray, timeoutMs: Long): Boolean {
         // Attempt 1: unauthenticated Allocate (type 0x0003)
         val req1 = buildAllocateRequest(txId, username = null, realm = null, nonce = null, integrityKey = null)
-        socket.send(DatagramPacket(req1, req1.size))
-        val resp1 = receive(socket)
+        val resp1 = io.exchange(req1, timeoutMs) ?: return false
         val challenge = parseAllocateChallenge(resp1, txId) ?: return false
         if (challenge.realm == null || challenge.nonce == null) return false
 
@@ -174,8 +188,7 @@ class StunTurnProbe(
         val req2 = buildAllocateRequest(
             txId, username = username, realm = challenge.realm, nonce = challenge.nonce, integrityKey = key
         )
-        socket.send(DatagramPacket(req2, req2.size))
-        val resp2 = receive(socket)
+        val resp2 = io.exchange(req2, timeoutMs) ?: return false
         return parseAllocateSuccess(resp2, txId)
     }
 
@@ -233,7 +246,6 @@ class StunTurnProbe(
         if (nonce != null) attrs += stunAttr(0x0015, nonce.toByteArray())         // NONCE
 
         val body = attrs.fold(ByteArray(0)) { acc, a -> acc + a }
-        val miIndex = if (integrityKey != null) body.size else -1
         var finalBody = body
 
         if (integrityKey != null) {
@@ -252,15 +264,12 @@ class StunTurnProbe(
 
         val msg = header.array() + finalBody
 
-        if (integrityKey != null && miIndex >= 0) {
+        if (integrityKey != null) {
             // RFC 5389 §15.4: the HMAC is over the STUN message up to but NOT
             // including the MESSAGE-INTEGRITY attribute itself, while the STUN
             // header length field covers the whole message including the MI TLV.
-            // msg.size - 24 = header + attributes + MI attribute header only,
-            // so exclude the entire 24-byte MI TLV (4 header + 20 value).
             val hmacInput = msg.copyOf(msg.size - 24)
             val hmac = hmacSha1(integrityKey, hmacInput)
-            // Write the real HMAC into the placeholder.
             System.arraycopy(hmac, 0, msg, msg.size - 20, 20)
         }
         return msg
@@ -283,5 +292,107 @@ class StunTurnProbe(
 
     companion object {
         private const val MAGIC_COOKIE = 0x2112A442
+    }
+}
+
+/** Common contract for one probe transport (UDP datagram or TCP stream). */
+private interface StunTurnIo {
+    fun name(): String
+    fun open(timeoutMs: Long): Boolean
+    /** Send [payload] and return the single reply message, or null on failure. */
+    fun exchange(payload: ByteArray, timeoutMs: Long): ByteArray?
+    fun close()
+}
+
+/** UDP transport: a connected DatagramSocket; each exchange = one datagram out, one in. */
+private class UdpTransport(
+    private val address: InetAddress,
+    private val port: Int,
+) : StunTurnIo {
+    private var socket: DatagramSocket? = null
+
+    override fun name() = "udp"
+
+    override fun open(timeoutMs: Long): Boolean = try {
+        DatagramSocket().also { s ->
+            socket = s
+            s.soTimeout = timeoutMs.toInt()
+            s.connect(InetSocketAddress(address, port))
+        }
+        true
+    } catch (e: Exception) {
+        false
+    }
+
+    override fun exchange(payload: ByteArray, timeoutMs: Long): ByteArray? {
+        val s = socket ?: return null
+        s.send(DatagramPacket(payload, payload.size))
+        val buf = ByteArray(1500)
+        val pkt = DatagramPacket(buf, buf.size)
+        s.receive(pkt)
+        return pkt.data.copyOf(pkt.length)
+    }
+
+    override fun close() {
+        runCatching { socket?.close() }
+        socket = null
+    }
+}
+
+/** TCP transport: a connected Socket; reads a full STUN message (framed by its length field). */
+private class TcpTransport(
+    private val address: InetAddress,
+    private val port: Int,
+) : StunTurnIo {
+    private var socket: Socket? = null
+    private var out: OutputStream? = null
+    private var input: InputStream? = null
+
+    override fun name() = "tcp"
+
+    override fun open(timeoutMs: Long): Boolean = try {
+        Socket().also { s ->
+            socket = s
+            s.connect(InetSocketAddress(address, port), timeoutMs.toInt())
+            s.soTimeout = timeoutMs.toInt()
+            out = s.getOutputStream()
+            input = s.getInputStream()
+        }
+        true
+    } catch (e: Exception) {
+        runCatching { socket?.close() }
+        socket = null
+        false
+    }
+
+    override fun exchange(payload: ByteArray, timeoutMs: Long): ByteArray? {
+        val o = out ?: return null
+        val i = input ?: return null
+        // STUN-over-TCP carries each message's length in its own header, so
+        // write the request then read one complete STUN message.
+        o.write(payload)
+        o.flush()
+        val header = ByteArray(20)
+        readFully(i, header)
+        val msgLen = ((header[2].toInt() and 0xFF) shl 8) or (header[3].toInt() and 0xFF)
+        val body = ByteArray(msgLen)
+        readFully(i, body)
+        return header + body
+    }
+
+    private fun readFully(i: InputStream, buf: ByteArray) {
+        var off = 0
+        while (off < buf.size) {
+            val n = i.read(buf, off, buf.size - off)
+            if (n < 0) throw SocketException("socket closed")
+            off += n
+        }
+    }
+
+    override fun close() {
+        runCatching { socket?.close() }
+        socket = null
+        out = null
+        input = null
     }
 }

@@ -23,6 +23,10 @@ function iceServers() {
   return [
     { urls: `stun:${h}:${cfg.turn.stunPort}` },
     { urls: `turn:${h}:${cfg.turn.stunPort}?transport=udp`, username, credential: password },
+    // TURN-over-TCP fallback: many mobile/carrier networks block UDP to
+    // arbitrary ports but allow TCP. coturn listens on the STUN/TURN port for
+    // TCP too (WebRTC ICE can fall back to a TURN TCP relay), so advertise it.
+    { urls: `turn:${h}:${cfg.turn.stunPort}?transport=tcp`, username, credential: password },
     // NOTE: `turns:` (TLS on 5349) is deliberately NOT advertised — coturn has
     // no TLS certificate configured, so a turns URL can never connect. Advertise
     // it again only after provisioning a cert and enabling tls-listening-port

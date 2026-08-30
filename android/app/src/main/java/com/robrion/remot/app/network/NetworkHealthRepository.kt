@@ -31,6 +31,8 @@ data class NetworkHealth(
     val stun: EndpointState = EndpointState.UNKNOWN,
     val turn: EndpointState = EndpointState.UNKNOWN,
     val turnHost: String? = null,
+    /** "udp" | "tcp" | null — the transport the successful STUN/TURN reply used. */
+    val turnTransport: String? = null,
     val latencyMs: Long? = null,
     val lastCheckedAt: Long = 0L,
     val checking: Boolean = false,
@@ -132,6 +134,7 @@ class NetworkHealthRepository(
         var turn = EndpointState.UNKNOWN
         var latency: Long? = null
         var error: String? = null
+        var transport: String? = null
 
         if (internet == EndpointState.ONLINE && turnEndpoint != null) {
             val result = probeEndpoint(turnEndpoint)
@@ -140,6 +143,7 @@ class NetworkHealthRepository(
             turn = if (result.turnOk) EndpointState.ONLINE else EndpointState.OFFLINE
             latency = result.latencyMs
             error = result.error
+            transport = result.transport
         } else if (turnEndpoint == null && internet == EndpointState.ONLINE) {
             stun = EndpointState.UNKNOWN
             turn = EndpointState.UNKNOWN
@@ -157,6 +161,7 @@ class NetworkHealthRepository(
             stun = stun,
             turn = turn,
             turnHost = turnEndpoint?.host,
+            turnTransport = transport,
             latencyMs = latency,
             lastCheckedAt = now,
             checking = false,
@@ -183,9 +188,11 @@ class NetworkHealthRepository(
     }
 
     /**
-     * Probes the issued TURN endpoint. If that host is unreachable and a direct
-     * public IP was configured at build time (SERVER_IP secret), retries against
-     * the IP so connectivity is honest even when the hostname route is down.
+     * Probes the issued TURN/STUN endpoint. If that host is unreachable and a
+     * direct public IP was configured at build time (SERVER_IP secret), retries
+     * against the IP so connectivity is honest even when the hostname route is
+     * down. The probe itself tries UDP first then TCP (carrier networks often
+     * block UDP), so STUN/TURN can come back online via TCP where applicable.
      */
     private fun probeEndpoint(ep: TurnEndpoint): StunTurnResult {
         fun probe(host: String) = runCatching {
@@ -217,22 +224,32 @@ class NetworkHealthRepository(
         val password: String?,
     )
 
+    /**
+     * Finds the health-check endpoint. We MUST prefer the server that carries
+     * TURN credentials (the `turn:` entry): the probe uses them to perform a real
+     * authenticated Allocate, and STUN works regardless. The previous logic
+     * returned the FIRST entry — the `stun:` URL, which has NO username/password
+     * — so the probe reported STUN ok but TURN always `no-credentials`, i.e.
+     * TURN was never actually tested. Fall back to a STUN-only entry only when
+     * no TURN URL is present (STUN reachability is still meaningful on its own).
+     */
     private fun parseTurnEndpoint(servers: List<PeerConnection.IceServer>): TurnEndpoint? {
         if (servers.isEmpty()) return null
+        var stunOnly: TurnEndpoint? = null
         for (s in servers) {
             val urls = runCatching { s.urls.toList() }.getOrElse { emptyList() }
+            val username = runCatching { s.username }.getOrNull()
+            val password = runCatching { s.password }.getOrNull()
             for (u in urls) {
-                // turn:host:port?transport=udp / stun:host:port
+                // turn:host:port?transport=udp / turns:host / stun:host:port
                 val m = Regex("^(turn|turns|stun):([^:?]+)(?::(\\d+))?").find(u) ?: continue
-                val scheme = m.groupValues[1]
-                val host = m.groupValues[2]
-                val port = m.groupValues[3].toIntOrNull() ?: 3478
-                val username = runCatching { s.username }.getOrNull()
-                val password = runCatching { s.password }.getOrNull()
-                return TurnEndpoint(host, port, username, password)
+                val hasCreds = username != null && password != null
+                val ep = TurnEndpoint(m.groupValues[2], m.groupValues[3].toIntOrNull() ?: 3478, username, password)
+                if (hasCreds) return ep      // TURN entry with creds — the one we actually test
+                if (stunOnly == null) stunOnly = ep   // remember a STUN-only fallback
             }
         }
-        return null
+        return stunOnly
     }
 
     // ---- network change observer: re-check immediately ----

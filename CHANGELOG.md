@@ -12,6 +12,62 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C004P08 — 2026-08-30
+
+### Summary
+
+Fixes the app consistently reporting **STUN/TURN unreachable** even though the
+servers themselves are healthy. Two client-side bugs were found and fixed: the
+health check probed the wrong ICE entry (the `stun:` one, which has no TURN
+credentials, so TURN was never actually tested and always fell through to
+`no-credentials`), and the probe was UDP-only — on mobile/carrier networks that
+block UDP, both STUN and TURN timed out even though TCP works. The probe now
+falls back to TCP, and the server advertises TURN-over-TCP for WebRTC ICE.
+
+### Fixed
+
+- **`parseTurnEndpoint` picked the `stun:` ICE entry (no creds):** the probe
+  ran with `username=null`, so STUN reported online but TURN always returned
+  `no-credentials` and showed **OFLINE** — TURN was never truly tested. It now
+  prefers the credentialed `turn:` entry (falls back to STUN-only only when no
+  TURN URL exists).
+- **UDP-only probe:** on carrier networks that throttle/block UDP to arbitrary
+  ports, both STUN binding and TURN Allocate timed out → the exact reported
+  **STUN: unreachable / TURN: unreachable**. `StunTurnProbe` now tries **UDP
+  first, then TCP** (coturn listens on 3478 TCP for WebRTC), so health comes
+  back online over TCP when UDP is blocked.
+
+### Added
+
+- **TURN-over-TCP ICE server** (`server/src/turn.js`): the broker now
+  advertises `turn:<host>:3478?transport=tcp` (with the same short-lived
+  credentials) alongside the UDP relay, giving WebRTC ICE a relay fallback on
+  UDP-restricted networks. Deployed to both the primary and secondary servers;
+  verified the running server emits STUN + TURN UDP + TURN TCP.
+- **ICE diagnostics in the WebRTC session:** `RtcSession` now logs
+  `[ICE-GATHERING] NEW/GATHERING/COMPLETE`, `[ICE-CANDIDATE] type=host|srflx|relay`
+  (candidate TYPE only — never an IP), and
+  `[WEBRTC] NEW/CHECKING/CONNECTED/COMPLETED/DISCONNECTED/FAILED/CLOSED` to make
+  connectivity diagnosis deterministic.
+- `StunTurnResult.transport` (`"udp"`/`"tcp"`) surfaced through
+  `NetworkHealth.turnTransport`, so the UI/probe log shows which transport a
+  successful reply used.
+
+### Changed
+
+- Bumped production version to **V2C004P08** (versionCode 200408).
+
+### Verified (server side, during this fix)
+
+- **Real relay-media round-trip to the PRIMARY from an external vantage PASSED:**
+  Allocate → relayed `43.156.82.52:55921` (in 49152–65535) → CreatePermission →
+  peer datagram relayed back intact — proof UDP relay media works end-to-end.
+- **STUN-over-TCP + TURN-over-TCP** verified speaking STUN/TURN from outside.
+- `turn.robrion.net` resolves directly to the TURN host (DNS-only, not
+  Cloudflare-proxied); coturn `static-auth-secret` matches the signaling
+  `TURN_SECRET` (verified by HMAC prefix, never logged).
+
+---
 ## V2C004P07 — 2026-08-30
 
 ### Summary
@@ -839,4 +895,3 @@ the full documentation and release pipeline.
 - Android: `SignalingClient` presents `DeviceIdentity.publicKeyB64()` on
   register and stops auto-reconnecting after a permanent registration rejection.
 - Input: `long-press` maps to a 600 ms gesture stroke on the host.
-
