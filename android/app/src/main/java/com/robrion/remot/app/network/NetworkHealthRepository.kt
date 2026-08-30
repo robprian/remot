@@ -21,6 +21,8 @@ data class NetworkHealth(
     val internet: EndpointState = EndpointState.UNKNOWN,
     val signaling: EndpointState = EndpointState.UNKNOWN,
     val signalingUrl: String? = null,
+    /** "wss" | "ws" | null — the scheme of the ACTIVE signaling transport. */
+    val signalingTransport: String? = null,
     val signalingError: String? = null,
     /** True when the server accepted our signed registration (distinct from TCP/WS connect). */
     val signalingRegistered: Boolean = false,
@@ -122,8 +124,12 @@ class NetworkHealthRepository(
             else -> EndpointState.OFFLINE
         }
 
-        // Developer-facing signaling diagnostic data (URL + why it's failing).
+        // Developer-facing signaling diagnostic data (URL + transport + why failing).
         val signalingUrl = sig.signalingUrl
+        // "wss"/"ws" from the ACTIVE endpoint — lets the UI distinguish a secure
+        // production channel from an insecure cleartext fallback.
+        val signalingTransport = signalingUrl?.substringBefore("://")?.lowercase()
+            ?.takeIf { it == "wss" || it == "ws" }
         val signalingError = if (signaling == EndpointState.ONLINE) null
         else sig.lastConnectError
 
@@ -154,6 +160,7 @@ class NetworkHealthRepository(
             internet = internet,
             signaling = signaling,
             signalingUrl = signalingUrl,
+            signalingTransport = signalingTransport,
             signalingError = signalingError,
             signalingRegistered = sig.isRegistered,
             signalingAuthFailed = sig.isAuthFailed,

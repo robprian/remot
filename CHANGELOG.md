@@ -12,6 +12,45 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C004P09 — 2026-08-30
+
+### Summary
+
+Fixes the production **WSS :8443** signaling endpoint (the app fell back to
+cleartext `ws://:8080` because port 8443 was blocked at the host firewall), and
+makes the active signaling transport explicit in the UI. Both the primary and
+the secondary signaling servers now serve trusted `wss://` on :8443 and are
+verified end-to-end (TLS handshake, WebSocket upgrade, signed registration,
+heartbeat ping/pong).
+
+### Fixed
+
+- Fixed production WSS signaling connectivity: port **8443/tcp** was never
+  opened in the primary host firewall, so `wss://` connections were dropped
+  while the cleartext `ws://:8080` fallback kept working. The port is now open
+  permanently and `wss://43.156.82.52:8443` completes the full register
+  handshake from an external vantage.
+- Verified the secondary server (103.250.10.238) serves the same WSS :8443
+  endpoint with a valid Remot-CA leaf (SAN includes the public IP); the full
+  register + heartbeat round-trip succeeds over TLS.
+
+### Added
+
+- Added `signalingTransport` to the health snapshot; the UI now labels the
+  active channel **"WSS · secure"** or **"WS fallback · insecure"** on both the
+  home Connection Health card and Diagnostics, so a silent downgrade to
+  cleartext is never misrepresented.
+
+### Infrastructure
+
+- Primary host firewall now permanently allows **TCP 8443** (wss signaling).
+  Required inbound on primary: 8443/tcp (wss), plus existing 8080, 3478, 5349
+  and relay UDP 49152–65535. Secondary already serves wss on 8443 (verified
+  externally).
+
+---
+
+---
 ## V2C004P08 — 2026-08-30
 
 ### Summary

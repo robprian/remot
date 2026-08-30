@@ -6,7 +6,8 @@
 # is reachable on the ports Remot needs. Prints each port's state from the
 # internet's point of view:
 #
-#   signaling  8080/tcp   (OPEN required)
+#   signaling ws  8080/tcp   (OPEN required)
+#   signaling wss 8443/tcp   (OPEN required for secure transport)
 #   STUN/TURN  3478/udp+tcp
 #   TURNS      5349/tcp
 #   TURN relay 49152-65535/udp   (sample check only; full range is covered by
@@ -33,8 +34,8 @@ echo
 printf "%-22s %-12s %s\n" "SERVICE" "PORT" "STATE (expected)"
 printf "%-22s %-12s %s\n" "-------" "----" "-----"
 
-for spec in "Signaling|8080/|tcp|open" "STUN/TURN TCP|3478/|tcp|open" \
-            "TURNS TCP|5349/|tcp|open"; do
+for spec in "Signaling ws|8080/|tcp|open" "Signaling wss|8443/|tcp|open" \
+            "STUN/TURN TCP|3478/|tcp|open" "TURNS TCP|5349/|tcp|open"; do
   IFS='|' read -r name port proto want <<<"$spec"
   out=$(nmap -Pn -sT -p "${port%%/}" "$HOST" 2>/dev/null)
   state=$(echo "$out" | grep -E "^${port%%/}/${proto}" | awk '{print $2}')
@@ -58,7 +59,8 @@ echo "OK. The authoritative UDP test is a real relay allocation via the app, or 
 echo "python STUN probe in remot-watchdog.sh."
 echo
 echo "Firewall checklist (Alibaba Security Group + host ufw/nftables where used):"
-echo "  - Allow inbound  TCP 8080   (signaling)"
+echo "  - Allow inbound  TCP 8080   (signaling ws fallback)"
+echo "  - Allow inbound  TCP 8443   (signaling wss/TLS)"
 echo "  - Allow inbound  UDP+TCP 3478   (STUN/TURN)"
 echo "  - Allow inbound  TCP 5349   (TURNS/TLS)"
 echo "  - Allow inbound  UDP 49152-65535   (TURN relay allocations)"

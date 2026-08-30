@@ -388,12 +388,24 @@ private fun DiagnosticsCard(vm: MainViewModel) {
                 Text("Registration", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                 Text(regText, style = MaterialTheme.typography.labelMedium, color = statusColor(regTone))
             }
-            h.signalingUrl?.let {
+            h.signalingUrl?.let { url ->
+                val isTls = h.signalingTransport == "wss"
                 Row {
                     Text("Signaling endpoint", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                    Text(it, style = MaterialTheme.typography.bodySmall,
+                    Text(url, style = MaterialTheme.typography.bodySmall,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                val transportLabel =
+                    if (isTls) "WSS · secure"
+                    else if (url.startsWith("ws://")) "WS fallback · insecure"
+                    else "—"
+                Row {
+                    Text("Transport", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    Text(transportLabel, style = MaterialTheme.typography.bodySmall,
+                        color = if (isTls) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.error)
                 }
             }
             h.signalingLatencyMs?.let { ms ->

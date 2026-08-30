@@ -50,9 +50,9 @@ android {
         minSdk = 25
         targetSdk = 35
         // V/C/P production versioning (see docs/VERSIONING.md):
-        // versionCode = V*100000 + C*100 + P  →  V2C004P08 = 200408
-        versionCode = 200408
-        versionName = "V2C004P08"
+        // versionCode = V*100000 + C*100 + P  →  V2C004P09 = 200409
+        versionCode = 200409
+        versionName = "V2C004P09"
 
         // Signaling endpoint, overridable at build time. On CI it is supplied via
         // the SIGNALING_URL secret; locally it defaults to a build-time property.

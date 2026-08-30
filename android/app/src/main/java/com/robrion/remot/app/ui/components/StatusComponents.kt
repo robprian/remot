@@ -151,6 +151,22 @@ fun NetworkHealthCard(
                     Text(text, style = MaterialTheme.typography.labelMedium, color = statusColor(tone))
                 }
             }
+            // Transport: distinguish the secure WSS channel from an insecure
+            // cleartext fallback so the user is never misled about which one is live.
+            health.signalingUrl?.let { url ->
+                val isTls = health.signalingTransport == "wss"
+                val transportLabel =
+                    if (isTls) "WSS · secure"
+                    else if (url.startsWith("ws://")) "WS fallback · insecure"
+                    else "—"
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Transport", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                    Text(transportLabel, style = MaterialTheme.typography.bodySmall,
+                        color = if (isTls) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.error)
+                }
+            }
             StatusIndicator("STUN", health.stun)
             StatusIndicator("TURN", health.turn)
 
