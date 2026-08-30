@@ -80,6 +80,28 @@ class StunTurnProbeTest {
     }
 
     @Test
+    fun droppedFirstUdpDatagramStillRecoversWithinRetries() {
+        // Carrier/CGNAT NATs often drop the very first outbound datagram. The
+        // probe now retries UDP up to 3 times before falling back to TCP, so a
+        // single cold-loopback miss must NOT turn a healthy STUN/TURN into
+        // "unreachable".
+        val server = MockStunTurnServer(dropFirstNDatagrams = 1).start()
+        try {
+            val result = StunTurnProbe(server.host, server.port, "user", "pass").probe(timeoutMs = 1000)
+
+            assertTrue("STUN should recover after the dropped first datagram", result.stunOk)
+            assertTrue("TURN should allocate after the retry", result.turnOk)
+            assertEquals(null, result.error)
+            // The only way stunOk can be true with the mock dropping its first
+            // datagram is if the probe actually retried UDP (a single attempt
+            // would have timed out silently).
+            assertTrue("one binding reached the server (the first was dropped)", server.bindingRequests >= 1)
+        } finally {
+            server.stop()
+        }
+    }
+
+    @Test
     fun unreachableServerTimesOutAndIsNotFaked() {
         // A bound-but-silent socket swallows the probe's packets and never replies.
         val silent = DatagramSocket(0, InetAddress.getByName("127.0.0.1"))
@@ -117,7 +139,10 @@ class StunTurnProbeTest {
  * presence of a USERNAME attribute) with a success response. Runs on a daemon
  * thread; only ever bound to 127.0.0.1.
  */
-private class MockStunTurnServer {
+private class MockStunTurnServer(
+    /** Count of inbound datagrams to silently drop before answering, to model a cold NAT. */
+    private val dropFirstNDatagrams: Int = 0,
+) {
 
     private val socket = DatagramSocket(0, InetAddress.getByName("127.0.0.1"))
 
@@ -140,6 +165,7 @@ private class MockStunTurnServer {
             // Signal once we are actually reading so probe() never races a
             // thread that has not started receiving yet.
             ready.countDown()
+            var dropped = 0
             while (running) {
                 val buf = ByteArray(1500)
                 val pkt = DatagramPacket(buf, buf.size)
@@ -148,6 +174,11 @@ private class MockStunTurnServer {
                 } catch (e: Exception) {
                     // Socket was closed by stop() — drain/exit the loop.
                     break
+                }
+                // Model a cold NAT: silently swallow the first inbound datagram(s).
+                if (dropFirstNDatagrams > 0 && dropped < dropFirstNDatagrams) {
+                    dropped++
+                    continue
                 }
                 // A malformed request must not kill the reader thread.
                 try {

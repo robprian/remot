@@ -72,7 +72,17 @@ class StunTurnProbe(
             return StunTurnResult(dnsOk = false, stunOk = false, turnOk = false, error = "dns")
         }
 
-        val udp = probeTransport(UdpTransport(address, port), timeoutMs)
+        // Retry UDP a few times before giving up: carrier/CGNAT NATs often drop
+        // the very first outbound datagram while the NAT binding is being
+        // established, so a single attempt can false-negative.
+        var udp = StunTurnResult(dnsOk = true, stunOk = false, turnOk = false, error = "timeout")
+        val udpAttempts = 3
+        for (i in 1..udpAttempts) {
+            udp = probeTransport(UdpTransport(address, port), timeoutMs)
+            // Stop early once UDP actually answered (or failed for a definitive
+            // reason that TCP cannot fix).
+            if (udp.stunOk || udp.error !in setOf("timeout", "stun")) break
+        }
         // Only fall back to TCP when UDP genuinely failed at the STUN layer
         // (timeout / stun). If UDP already answered STUN+TURN, or it merely
         // lacked credentials, there is nothing to retry TCP for.

@@ -434,6 +434,21 @@ private fun DiagnosticsCard(vm: MainViewModel) {
                     Text(it, style = MaterialTheme.typography.bodyMedium)
                 }
             }
+            // Why STUN/TURN is offline, surfaced for diagnosis: the probe error
+            // (dns/stun/timeout/turn) plus which transport answered. If both
+            // UDP and TCP time out, the device network is filtering port 3478.
+            if ((h.stun != EndpointState.ONLINE || h.turn != EndpointState.ONLINE) && h.error != null) {
+                // We only mention the transport when the probe actually answered
+                // (a success); otherwise both UDP and TCP were silent → filtered.
+                val reply = if (h.stun == EndpointState.ONLINE || h.turn == EndpointState.ONLINE)
+                    " · answered over ${h.turnTransport}" else ""
+                Text(
+                    "Probe: ${h.error}$reply — port 3478 (UDP/TCP) is likely filtered on this network",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
             h.latencyMs?.let {
                 Row {
                     Text("TURN latency", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))

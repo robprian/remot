@@ -12,6 +12,53 @@ Production versions use the V/C/P scheme (see `docs/VERSIONING.md`):
 
 ---
 
+## V2C004P12 — 2026-08-30
+
+### Summary
+
+Hardens the STUN/TURN health probe for mobile/carrier networks. The server
+side was verified healthy independently (real relay media round-trip PASS in
+both directions, and TURN-over-TCP — STUN Binding + Allocate — PASS from an
+external vantage with the exact framing the app sends), so on-device
+"STUN/TURN unreachable" points at the device's path to port 3478. This patch
+makes the probe survive a cold-NAT first-datagram drop and surfaces the exact
+probe error + transport in Diagnostics so the next report is conclusive.
+
+### Fixed
+
+- **UDP first-packet drop (cold NAT/CGNAT):** a carrier NAT often drops the
+  very first outbound UDP datagram while establishing its binding, so a
+  single-attempt probe false-negatived to "unreachable" even on a healthy
+  server. The probe now retries UDP up to **3 times** (before falling back to
+  TCP), so a one-off drop no longer misreports STUN/TURN as offline.
+
+### Improved
+
+- **Diagnostics surfaces the probe diagnosis:** when STUN or TURN is offline
+  and the probe answered nothing on either transport, the screen now prints
+  `Probe: <error> — port 3478 (UDP/TCP) is likely filtered on this network`; if
+  the probe did answer on one transport it shows `· answered over udp|tcp`.
+  This distinguishes "network filters port 3478" from a genuine TURN auth
+  failure, giving a definitive on-device answer.
+
+### Tested / verified (this patch)
+
+- **TURN-over-TCP PASS from an external vantage** against the production
+  coturn with the app's exact framing (no 2-byte STUN TCP prefix), the same
+  short-lived auth-secret credentials the app uses: STUN Binding OK +
+  authenticated Allocate (relay allocated) OK. Confirms both UDP and TCP on
+  :3478 accept allocations, so the remaining variable is purely the client's
+  network path.
+- Unit tests updated: added a mock that silently drops its first datagram and
+  asserted the probe still reports STUN/TURN online (proving the retry path).
+
+### Changed
+
+- Bumped production version to **V2C004P12** (versionCode 200412).
+
+---
+
+---
 ## V2C004P11 — 2026-08-30
 
 ### Summary
